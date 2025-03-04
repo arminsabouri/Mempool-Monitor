@@ -18,3 +18,10 @@ Example regtest run:
 ```bash
 cargo run -- --bitcoind-user foo --bitcoind-password bar --bitcoind-host "127.0.0.1" --bitcoind-rpc-port 18443 --bitcoind-zmq-port 28373
 ```
+
+## TODO
+
+- [ ] Replace sled with something that allows you to query via versious indecies
+- [ ] multi-threading
+- [ ] add tests
+- [ ] add record CPFP
