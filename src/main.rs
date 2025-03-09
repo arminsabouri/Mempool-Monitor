@@ -9,7 +9,6 @@ mod database;
 // Command line arguments
 #[derive(Clone, Debug, Parser)]
 struct Args {
-    // The path to the file to read
     #[clap(long)]
     bitcoind_user: String,
     #[clap(long)]
@@ -48,6 +47,7 @@ async fn main() -> Result<()> {
     let zmq = connect_zmq(&args)?;
     let db = database::Database::new("mempool-tracker.db")?;
     let mut app = app::App::new(bitcoind, zmq, db);
+    app.init()?;
     app.run().await?;
 
     Ok(())

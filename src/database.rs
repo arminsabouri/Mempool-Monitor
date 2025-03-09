@@ -25,10 +25,10 @@ pub(crate) struct TransactionInner {
 }
 
 impl TransactionInner {
-    pub(crate) fn new(tx: Transaction) -> Self {
+    pub(crate) fn new(tx: Transaction, found_at: Option<SystemTime>) -> Self {
         Self {
             inner: tx,
-            found_at: SystemTime::now(),
+            found_at: found_at.unwrap_or(SystemTime::UNIX_EPOCH),
             mined_at: SystemTime::UNIX_EPOCH,
             rbf_inner: vec![],
         }
@@ -47,72 +47,48 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn txid_exists(&self, txid: &Txid) -> Result<bool> {
-        let key_bytes = txid.as_raw_hash().to_byte_array().to_vec();
-        let tx_inner_bytes = self.0.open_tree(TX_INDEX_KEY)?;
-        let tx_inner_bytes = tx_inner_bytes.get(key_bytes)?;
-        Ok(tx_inner_bytes.is_some())
-    }
-
-    pub(crate) fn record_mined_tx(&self, txid: &Txid) -> Result<()> {
+    pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
         let tree = self.0.open_tree(TX_INDEX_KEY)?;
-        let key_bytes = txid.as_raw_hash().to_byte_array().to_vec();
+        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
         let tx_inner_bytes = tree
-            .get(key_bytes.clone())?
+            .get(inputs_hash.clone())?
             .ok_or(anyhow::anyhow!("Transaction not found"))?;
         let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
         tx_inner.mined_at = SystemTime::now();
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&key_bytes, tx_inner_bytes)?;
+        tree.insert(&inputs_hash, tx_inner_bytes)?;
         self.flush()?;
 
         Ok(())
     }
 
-    pub(crate) fn insert_mempool_tx(&self, tx: Transaction) -> Result<()> {
+    pub(crate) fn insert_mempool_tx(
+        &self,
+        tx: Transaction,
+        found_at: Option<SystemTime>,
+    ) -> Result<()> {
         let tree = self.0.open_tree(TX_INDEX_KEY)?;
-        let key_bytes = tx.compute_txid().as_raw_hash().to_byte_array().to_vec();
-        let tx_inner = TransactionInner::new(tx.clone());
+        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let tx_inner = TransactionInner::new(tx.clone(), found_at);
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
 
-        tree.insert(&key_bytes, tx_inner_bytes)?;
-        let inputs_hash = self.get_inputs_hash(tx.input)?;
-        let inputs_hash_tree = self.0.open_tree(INPUTS_HASH_KEY)?;
-        inputs_hash_tree.insert(&inputs_hash, key_bytes)?;
-
+        tree.insert(&inputs_hash, tx_inner_bytes)?;
         self.flush()?;
         Ok(())
     }
 
-    /// Returns the txid of the transaction that has the same inputs as the given transaction.
-    pub(crate) fn inputs_hash(
-        &self,
-        inputs: impl IntoIterator<Item = TxIn>,
-    ) -> Result<Option<Txid>> {
-        let inputs_hash = self.get_inputs_hash(inputs)?;
-        let inputs_hash_tree = self.0.open_tree(INPUTS_HASH_KEY)?;
-        let key_bytes = inputs_hash_tree.get(inputs_hash)?;
-        if let Some(key_bytes) = key_bytes {
-            let byte_array = key_bytes
-                .to_vec()
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Invalid key bytes"))?;
-            let txid = Txid::from_byte_array(byte_array);
-            Ok(Some(txid))
-        } else {
-            Ok(None)
-        }
+    pub(crate) fn tx_exists(&self, tx: &Transaction) -> Result<bool> {
+        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+        let tx_inner_bytes = tree.get(inputs_hash.clone())?;
+        Ok(tx_inner_bytes.is_some())
     }
 
     pub(crate) fn record_rbf(&self, transaction: Transaction, fee_total: u64) -> Result<()> {
         let tree = self.0.open_tree(TX_INDEX_KEY)?;
-        let key_bytes = transaction
-            .compute_txid()
-            .as_raw_hash()
-            .to_byte_array()
-            .to_vec();
+        let inputs_hash = self.get_inputs_hash(transaction.clone().input)?;
         let tx_inner_bytes = tree
-            .get(key_bytes.clone())?
+            .get(inputs_hash.clone())?
             .ok_or(anyhow::anyhow!("Transaction not found"))?;
         let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
         tx_inner.rbf_inner.push(RBFInner {
@@ -120,7 +96,7 @@ impl Database {
             fee_total,
         });
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&key_bytes, tx_inner_bytes)?;
+        tree.insert(&inputs_hash, tx_inner_bytes)?;
         self.flush()?;
         Ok(())
     }
@@ -136,7 +112,6 @@ impl Database {
 
         let hash = Sha256::from_engine(engine);
         let hash_bytes = hash.as_byte_array().to_vec();
-        println!("Inputs hash: {:?}", hash_bytes);
         Ok(hash_bytes)
     }
 }

@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use crate::database::Database;
 use anyhow::Result;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
@@ -17,6 +19,21 @@ impl App {
         Self { bitcoind, zmq, db }
     }
 
+    fn extract_existing_mempool(&self) -> Result<()> {
+        let mempool = self.bitcoind.get_raw_mempool_verbose()?;
+        info!("Found {} transactions in mempool", mempool.len());
+
+        for (txid, mempool_tx) in mempool.iter() {
+            let pool_exntrance_time = mempool_tx.time;
+            let tx = self.bitcoind.get_transaction(txid, None)?.transaction()?;
+            // let fee = mempool_tx.fees.base;
+            let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_exntrance_time as u64);
+            self.db.insert_mempool_tx(tx, Some(found_at))?;
+        }
+
+        Ok(())
+    }
+
     fn get_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
         // TODO: this should be handled on a non blocking thread. This could halt if there are many inputs
         let out_total = tx.output.iter().map(|o| o.value).sum::<Amount>();
@@ -31,6 +48,11 @@ impl App {
         Ok(in_total - out_total)
     }
 
+    pub fn init(&mut self) -> Result<()> {
+        self.extract_existing_mempool()?;
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting mempool tracker");
         while let Some(message) = self.zmq.next().await {
@@ -42,20 +64,23 @@ impl App {
                     let tx_bytes = message.serialize_data_to_vec();
                     let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
                     let txid = tx.compute_txid();
-                    if let Some(txid) = self.db.inputs_hash(tx.clone().input)? {
-                        info!("Transaction was RBF'd: {:?}", txid);
-                        let fee = self.get_transaction_fee(&tx)?;
-                        info!("Fee: {}", fee);
-                        self.db.record_rbf(tx, fee.to_sat())?;
+                    let tx_info = self.bitcoind.get_raw_transaction_info(&txid, None)?;
+                    let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
+
+                    if self.db.tx_exists(&tx)? {
+                        if is_mined {
+                            self.db.record_mined_tx(&tx)?;
+                            info!("Transaction already exists: {:?}", txid);
+                        } else {
+                            info!("Transaction was RBF'd: {:?}", txid);
+                            let fee = self.get_transaction_fee(&tx)?;
+                            info!("Fee: {}", fee);
+                            self.db.record_rbf(tx, fee.to_sat())?;
+                        }
                         continue;
                     }
 
-                    if self.db.txid_exists(&txid)? {
-                        self.db.record_mined_tx(&txid)?;
-                        info!("Transaction already exists: {:?}", txid);
-                        continue;
-                    }
-                    self.db.insert_mempool_tx(tx)?;
+                    self.db.insert_mempool_tx(tx, None)?;
                     info!("Transaction inserted: {:?}", txid);
                 }
                 Err(e) => {
