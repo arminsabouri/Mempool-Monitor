@@ -26,7 +26,6 @@ impl App {
         for (txid, mempool_tx) in mempool.iter() {
             let pool_exntrance_time = mempool_tx.time;
             let tx = self.bitcoind.get_transaction(txid, None)?.transaction()?;
-            // let fee = mempool_tx.fees.base;
             let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_exntrance_time as u64);
             self.db.insert_mempool_tx(tx, Some(found_at))?;
         }

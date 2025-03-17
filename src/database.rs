@@ -1,14 +1,13 @@
 use std::time::SystemTime;
 
 use anyhow::Result;
-use bitcoin::{consensus::Encodable, hashes::Hash, Transaction, TxIn, Txid};
+use bitcoin::{consensus::Encodable, Transaction, TxIn};
 use bitcoin_hashes::Sha256;
 use serde::{Deserialize, Serialize};
 
 pub struct Database(sled::Db);
 
 const TX_INDEX_KEY: &[u8; 6] = b"tx_idx";
-const INPUTS_HASH_KEY: &[u8; 7] = b"in_hash";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RBFInner {
@@ -21,6 +20,7 @@ pub(crate) struct TransactionInner {
     pub inner: Transaction,
     pub found_at: SystemTime,
     pub mined_at: SystemTime,
+    pub pruned_at: SystemTime,
     rbf_inner: Vec<RBFInner>,
 }
 
@@ -30,6 +30,7 @@ impl TransactionInner {
             inner: tx,
             found_at: found_at.unwrap_or(SystemTime::UNIX_EPOCH),
             mined_at: SystemTime::UNIX_EPOCH,
+            pruned_at: SystemTime::UNIX_EPOCH,
             rbf_inner: vec![],
         }
     }
@@ -42,7 +43,6 @@ impl Database {
     }
 
     pub(crate) fn flush(&self) -> Result<()> {
-        self.0.open_tree(INPUTS_HASH_KEY)?.flush()?;
         self.0.open_tree(TX_INDEX_KEY)?.flush()?;
         Ok(())
     }
@@ -59,6 +59,20 @@ impl Database {
         tree.insert(&inputs_hash, tx_inner_bytes)?;
         self.flush()?;
 
+        Ok(())
+    }
+
+    pub(crate) fn record_pruned_tx(&self, tx: &Transaction) -> Result<()> {
+        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let tx_inner_bytes = tree
+            .get(inputs_hash.clone())?
+            .ok_or(anyhow::anyhow!("Transaction not found"))?;
+        let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
+        tx_inner.pruned_at = SystemTime::now();
+        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
+        tree.insert(&inputs_hash, tx_inner_bytes)?;
+        self.flush()?;
         Ok(())
     }
 
