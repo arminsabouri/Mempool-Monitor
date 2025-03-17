@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{consensus::Encodable, Transaction, TxIn};
@@ -13,6 +13,15 @@ const TX_INDEX_KEY: &[u8; 6] = b"tx_idx";
 struct RBFInner {
     created_at: SystemTime,
     fee_total: u64,
+}
+
+impl Default for RBFInner {
+    fn default() -> Self {
+        RBFInner {
+            created_at: SystemTime::UNIX_EPOCH,
+            fee_total: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +53,32 @@ impl Database {
 
     pub(crate) fn flush(&self) -> Result<()> {
         self.0.open_tree(TX_INDEX_KEY)?.flush()?;
+        Ok(())
+    }
+
+    pub(crate) fn record_coinbase_tx(&self, tx: &Transaction) -> Result<()> {
+        if !tx.is_coinbase() {
+            // Nothing to do
+            return Ok(());
+        }
+        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+        let mut key_bytes = vec![];
+        tx.compute_txid()
+            .to_raw_hash()
+            .consensus_encode(&mut key_bytes)?;
+
+        let tx_inner = TransactionInner {
+            inner: tx.clone(),
+            found_at: SystemTime::now(),
+            mined_at: SystemTime::now(),
+            pruned_at: SystemTime::UNIX_EPOCH,
+            rbf_inner: Default::default(),
+        };
+
+        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
+        tree.insert(&key_bytes, tx_inner_bytes)?;
+        self.flush()?;
+
         Ok(())
     }
 

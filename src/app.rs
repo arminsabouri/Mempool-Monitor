@@ -62,6 +62,14 @@ impl App {
 
                     let tx_bytes = message.serialize_data_to_vec();
                     let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
+                    if tx.is_coinbase() {
+                        info!("Record coinbase tx");
+                        // Record coinbase sperately
+                        self.db.record_coinbase_tx(&tx)?;
+                        self.db.flush()?;
+                        continue;
+                    }
+
                     let txid = tx.compute_txid();
                     let tx_info = self.bitcoind.get_raw_transaction_info(&txid, None)?;
                     let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
