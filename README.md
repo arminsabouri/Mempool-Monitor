@@ -22,6 +22,9 @@ cargo run -- --bitcoind-user foo --bitcoind-password bar --bitcoind-host "127.0.
 ## TODO
 
 - [ ] Replace sled with something that allows you to query via versious indecies
-- [ ] multi-threading
+- [X] multi-threading
 - [ ] add tests
 - [ ] add record CPFP
+- [ ] Track prune
+- [ ] Same inputs being spent in other tx
+- [ ] prune large witnesses
