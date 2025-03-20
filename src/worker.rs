@@ -46,8 +46,6 @@ impl TaskContext {
 
     pub async fn run(&mut self) -> Result<()> {
         while let Ok(raw_tx) = self.raw_txs_rx.recv().await {
-            println!("Received raw tx");
-
             let tx_bytes = raw_tx;
             let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
             if tx.is_coinbase() {
@@ -72,10 +70,12 @@ impl TaskContext {
                     info!("Fee: {}", fee);
                     self.db.record_rbf(tx, fee.to_sat())?;
                 }
+                self.db.flush()?;
                 continue;
             }
 
             self.db.insert_mempool_tx(tx, None)?;
+            self.db.flush()?;
             info!("Transaction inserted: {:?}", txid);
         }
         Ok(())
