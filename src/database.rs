@@ -5,6 +5,7 @@ use bitcoin::{consensus::Encodable, Transaction, TxIn};
 use bitcoin_hashes::Sha256;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone)]
 pub struct Database(sled::Db);
 
 const TX_INDEX_KEY: &[u8; 6] = b"tx_idx";

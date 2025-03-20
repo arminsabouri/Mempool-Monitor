@@ -5,6 +5,7 @@ use clap::Parser;
 
 mod app;
 mod database;
+mod worker;
 
 // Command line arguments
 #[derive(Clone, Debug, Parser)]
@@ -21,14 +22,6 @@ struct Args {
     bitcoind_zmq_port: u16,
 }
 
-fn connect_bitcoind(args: &Args) -> Result<Client> {
-    let bitcoind = Client::new(
-        &format!("http://{}:{}", args.bitcoind_host, args.bitcoind_rpc_port),
-        Auth::UserPass(args.bitcoind_user.clone(), args.bitcoind_password.clone()),
-    )?;
-    Ok(bitcoind)
-}
-
 fn connect_zmq(args: &Args) -> Result<MessageStream> {
     let zmq = bitcoincore_zmq::subscribe_async(&[&format!(
         "tcp://{}:{}",
@@ -43,10 +36,11 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let bitcoind = connect_bitcoind(&args)?;
     let zmq = connect_zmq(&args)?;
     let db = database::Database::new("mempool-tracker.db")?;
-    let mut app = app::App::new(bitcoind, zmq, db);
+    let auth = Auth::UserPass(args.bitcoind_user, args.bitcoind_password);
+    let bitcoind_url = format!("http://{}:{}", args.bitcoind_host, args.bitcoind_rpc_port);
+    let mut app = app::App::new(bitcoind_url, auth, zmq, db);
     app.init()?;
     app.run().await?;
 
