@@ -6,12 +6,11 @@ use std::{
 use crate::{database::Database, worker::TaskContext};
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
-use bitcoin::{consensus::Decodable, Amount, Transaction};
 use bitcoincore_zmq::MessageStream;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
 use log::info;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::RwLock;
 
 const NUM_WORKERS: usize = 2;
 
@@ -55,9 +54,9 @@ impl App {
         info!("Found {} transactions in mempool", mempool.len());
 
         for (txid, mempool_tx) in mempool.iter() {
-            let pool_exntrance_time = mempool_tx.time;
+            let pool_entrance_time = mempool_tx.time;
             let tx = bitcoind.get_transaction(txid, None)?.transaction()?;
-            let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_exntrance_time as u64);
+            let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
             self.db.insert_mempool_tx(tx, Some(found_at))?;
         }
 
@@ -86,7 +85,6 @@ impl App {
         while let Some(message) = self.zmq.next().await {
             match message {
                 Ok(message) => {
-                    let topic = message.topic_str();
                     self.raw_txs_tx
                         .send(message.serialize_data_to_vec())
                         .await?;

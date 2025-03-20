@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoincore_zmq::{self, MessageStream};
-use bitcoind::bitcoincore_rpc::{Auth, Client};
+use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 
 mod app;

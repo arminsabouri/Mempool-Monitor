@@ -1,22 +1,17 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::sync::Arc;
 
 use crate::database::Database;
 use anyhow::Result;
-use async_channel::{bounded, Receiver, Sender};
+use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use log::info;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 
 pub struct TaskContext {
     bitcoind: Client,
     db: Database,
-    lock: Arc<RwLock<()>>,
+    _lock: Arc<RwLock<()>>,
     raw_txs_rx: Receiver<Vec<u8>>,
 }
 
@@ -24,13 +19,13 @@ impl TaskContext {
     pub fn new(
         bitcoind: Client,
         db: Database,
-        lock: Arc<RwLock<()>>,
+        _lock: Arc<RwLock<()>>,
         raw_txs_rx: Receiver<Vec<u8>>,
     ) -> Self {
         Self {
             bitcoind,
             db,
-            lock,
+            _lock,
             raw_txs_rx,
         }
     }
