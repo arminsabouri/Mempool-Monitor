@@ -28,3 +28,6 @@ cargo run -- --bitcoind-user foo --bitcoind-password bar --bitcoind-host "127.0.
 - [ ] Track prune
 - [ ] Same inputs being spent in other tx
 - [ ] prune large witnesses
+- [ ] Lock DB with RwLock
+- [ ] Capture mempool size and tx count at the time of entry and exit
+
