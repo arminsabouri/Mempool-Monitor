@@ -6,7 +6,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::get_inputs_hash;
+use crate::utils::{get_inputs_hash, prune_large_witnesses};
 
 #[derive(Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
@@ -115,15 +115,20 @@ impl Database {
     }
 
     pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
-        let inputs_hash = get_inputs_hash(tx.clone().input)?;
+        let mut tx = tx.clone();
+        prune_large_witnesses(&mut tx);
+        let mut tx_bytes = vec![];
+        tx.consensus_encode(&mut tx_bytes)?;
+
+        let inputs_hash = get_inputs_hash(tx.input)?;
         let conn = self.0.get()?;
         let mined_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
         conn.execute(
-            "UPDATE transactions SET mined_at = ?1 WHERE inputs_hash = ?2",
-            params![mined_at, inputs_hash],
+            "UPDATE transactions SET mined_at = ?1, tx_data = ?2 WHERE inputs_hash = ?3",
+            params![mined_at, tx_bytes, inputs_hash],
         )?;
 
         Ok(())
