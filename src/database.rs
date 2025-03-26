@@ -1,7 +1,7 @@
 use std::{time::SystemTime, vec};
 
 use anyhow::Result;
-use bitcoin::{consensus::Encodable, Transaction, TxIn};
+use bitcoin::{consensus::Encodable, hashes::Hash, Transaction, TxIn};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS transactions (
                 inputs_hash BLOB PRIMARY KEY,
+                tx_id BLOB NOT NULL,
                 tx_data BLOB NOT NULL,
                 found_at INTEGER NOT NULL,
                 mined_at INTEGER NOT NULL,
@@ -64,6 +65,11 @@ impl Database {
                 mempool_size INTEGER NOT NULL,
                 mempool_tx_count INTEGER NOT NULL
             )",
+            [],
+        )?;
+        // Create index
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transactions_tx_id ON transactions(tx_id)",
             [],
         )?;
 
@@ -166,7 +172,7 @@ impl Database {
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
-
+        let tx_id = tx.compute_txid().to_raw_hash().as_byte_array().to_vec();
         let found_at = found_at
             .unwrap_or(SystemTime::UNIX_EPOCH)
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -182,8 +188,8 @@ impl Database {
             .as_secs();
 
         conn.execute(
-            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![inputs_hash, tx_bytes, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count],
+            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_id, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![inputs_hash, tx_id, tx_bytes, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count],
         )?;
 
         Ok(())
