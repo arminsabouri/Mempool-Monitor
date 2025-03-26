@@ -3,12 +3,12 @@ use std::{time::SystemTime, vec};
 use anyhow::Result;
 use bitcoin::{consensus::Encodable, Transaction, TxIn};
 use bitcoin_hashes::Sha256;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
-pub struct Database(sled::Db);
-
-const TX_INDEX_KEY: &[u8; 6] = b"tx_idx";
+pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RBFInner {
@@ -48,21 +48,46 @@ impl TransactionInner {
 
 impl Database {
     pub(crate) fn new(path: &str) -> Result<Self> {
-        let db = sled::open(path)?;
-        Ok(Self(db))
+        let manager = SqliteConnectionManager::file(path);
+        let pool = r2d2::Pool::new(manager)?;
+        let conn = pool.get()?;
+
+        // Create tables if they don't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS transactions (
+                inputs_hash BLOB PRIMARY KEY,
+                tx_data BLOB NOT NULL,
+                found_at INTEGER NOT NULL,
+                mined_at INTEGER NOT NULL,
+                pruned_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        // Create the rbf table if it doesn't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rbf (
+                inputs_hash BLOB PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                fee_total INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        Ok(Self(pool))
     }
 
     pub(crate) fn flush(&self) -> Result<()> {
-        self.0.open_tree(TX_INDEX_KEY)?.flush()?;
+        let conn = self.0.get()?;
+        conn.cache_flush()?;
         Ok(())
     }
 
     pub(crate) fn record_coinbase_tx(&self, tx: &Transaction) -> Result<()> {
+        let conn = self.0.get()?;
         if !tx.is_coinbase() {
-            // Nothing to do
             return Ok(());
         }
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+
         let mut key_bytes = vec![];
         tx.compute_txid()
             .to_raw_hash()
@@ -77,38 +102,48 @@ impl Database {
         };
 
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&key_bytes, tx_inner_bytes)?;
-        self.flush()?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key_bytes, tx_inner_bytes],
+        )?;
 
         Ok(())
     }
 
     pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
         let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
-        let tx_inner_bytes = tree
-            .get(inputs_hash.clone())?
-            .ok_or(anyhow::anyhow!("Transaction not found"))?;
-        let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
-        tx_inner.mined_at = SystemTime::now();
-        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&inputs_hash, tx_inner_bytes)?;
-        self.flush()?;
+        let conn = self.0.get()?;
+        let mined_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        conn.execute(
+            "UPDATE transactions SET mined_at = ?1 WHERE inputs_hash = ?2",
+            params![mined_at, inputs_hash],
+        )?;
 
         Ok(())
     }
 
     pub(crate) fn record_pruned_tx(&self, tx: &Transaction) -> Result<()> {
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
         let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
-        let tx_inner_bytes = tree
-            .get(inputs_hash.clone())?
-            .ok_or(anyhow::anyhow!("Transaction not found"))?;
+        let conn = self.0.get()?;
+        let tx_inner_bytes: Vec<u8> = conn.query_row(
+            "SELECT tx_data FROM transactions WHERE inputs_hash = ?1",
+            params![inputs_hash],
+            |row| row.get(0),
+        )?;
+
         let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
         tx_inner.pruned_at = SystemTime::now();
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&inputs_hash, tx_inner_bytes)?;
-        self.flush()?;
+
+        conn.execute(
+            "UPDATE transactions SET tx_data = ?1 WHERE inputs_hash = ?2",
+            params![tx_inner_bytes, inputs_hash],
+        )?;
+
         Ok(())
     }
 
@@ -117,37 +152,59 @@ impl Database {
         tx: Transaction,
         found_at: Option<SystemTime>,
     ) -> Result<()> {
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+        let conn = self.0.get()?;
         let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
-        let tx_inner = TransactionInner::new(tx.clone(), found_at);
-        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
+        let mut tx_bytes = vec![];
+        tx.consensus_encode(&mut tx_bytes)?;
 
-        tree.insert(&inputs_hash, tx_inner_bytes)?;
-        self.flush()?;
+        let found_at = found_at
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mined_at = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let pruned_at = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![inputs_hash, tx_bytes, found_at, mined_at, pruned_at],
+        )?;
+
         Ok(())
     }
 
     pub(crate) fn tx_exists(&self, tx: &Transaction) -> Result<bool> {
+        let conn = self.0.get()?;
         let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
-        let tx_inner_bytes = tree.get(inputs_hash.clone())?;
-        Ok(tx_inner_bytes.is_some())
+
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE inputs_hash = ?1",
+            params![inputs_hash],
+            |row| row.get(0),
+        )?;
+
+        Ok(count > 0)
     }
 
     pub(crate) fn record_rbf(&self, transaction: Transaction, fee_total: u64) -> Result<()> {
-        let tree = self.0.open_tree(TX_INDEX_KEY)?;
+        let conn = self.0.get()?;
         let inputs_hash = self.get_inputs_hash(transaction.clone().input)?;
-        let tx_inner_bytes = tree
-            .get(inputs_hash.clone())?
-            .ok_or(anyhow::anyhow!("Transaction not found"))?;
-        let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
-        tx_inner.rbf_inner.push(RBFInner {
-            created_at: SystemTime::now(),
-            fee_total,
-        });
-        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        tree.insert(&inputs_hash, tx_inner_bytes)?;
-        self.flush()?;
+        let created_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total) VALUES (?1, ?2, ?3)",
+            params![inputs_hash, created_at, fee_total],
+        )?;
+
         Ok(())
     }
 

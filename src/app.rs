@@ -81,7 +81,6 @@ impl App {
 
     pub async fn run(&mut self) -> Result<()> {
         info!("===== Starting mempool tracker =====");
-
         while let Some(message) = self.zmq.next().await {
             match message {
                 Ok(message) => {

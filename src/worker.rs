@@ -46,6 +46,7 @@ impl TaskContext {
 
     pub async fn run(&mut self) -> Result<()> {
         while let Ok(raw_tx) = self.raw_txs_rx.recv().await {
+            info!("Received raw tx");
             let tx_bytes = raw_tx;
             let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
             if tx.is_coinbase() {
