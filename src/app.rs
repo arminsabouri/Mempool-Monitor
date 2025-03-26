@@ -52,12 +52,16 @@ impl App {
         let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
         let mempool = bitcoind.get_raw_mempool_verbose()?;
         info!("Found {} transactions in mempool", mempool.len());
+        let mempool_info = bitcoind.get_mempool_info()?;
+        let mempool_size = mempool_info.bytes;
+        let tx_count = mempool_info.size;
 
         for (txid, mempool_tx) in mempool.iter() {
             let pool_entrance_time = mempool_tx.time;
             let tx = bitcoind.get_transaction(txid, None)?.transaction()?;
             let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
-            self.db.insert_mempool_tx(tx, Some(found_at))?;
+            self.db
+                .insert_mempool_tx(tx, Some(found_at), mempool_size as u64, tx_count as u64)?;
         }
 
         Ok(())

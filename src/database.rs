@@ -59,7 +59,9 @@ impl Database {
                 tx_data BLOB NOT NULL,
                 found_at INTEGER NOT NULL,
                 mined_at INTEGER NOT NULL,
-                pruned_at INTEGER NOT NULL
+                pruned_at INTEGER NOT NULL,
+                mempool_size INTEGER NOT NULL,
+                mempool_tx_count INTEGER NOT NULL
             )",
             [],
         )?;
@@ -151,6 +153,8 @@ impl Database {
         &self,
         tx: Transaction,
         found_at: Option<SystemTime>,
+        mempool_size: u64,
+        mempool_tx_count: u64,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
@@ -172,8 +176,8 @@ impl Database {
             .as_secs();
 
         conn.execute(
-            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![inputs_hash, tx_bytes, found_at, mined_at, pruned_at],
+            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![inputs_hash, tx_bytes, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count],
         )?;
 
         Ok(())

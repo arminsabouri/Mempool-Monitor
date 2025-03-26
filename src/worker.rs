@@ -75,7 +75,8 @@ impl TaskContext {
                 continue;
             }
 
-            self.db.insert_mempool_tx(tx, None)?;
+            let mempool_info = self.bitcoind.get_mempool_info()?;
+            self.db.insert_mempool_tx(tx, None, mempool_info.bytes as u64, mempool_info.size as u64)?;
             self.db.flush()?;
             info!("Transaction inserted: {:?}", txid);
         }
