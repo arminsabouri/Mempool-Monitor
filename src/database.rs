@@ -1,7 +1,7 @@
 use std::{time::SystemTime, vec};
 
 use anyhow::Result;
-use bitcoin::{consensus::Encodable, hashes::Hash, Transaction, TxIn};
+use bitcoin::{consensus::Encodable, hashes::Hash, Transaction};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,8 @@ impl Database {
                 mined_at INTEGER NOT NULL,
                 pruned_at INTEGER NOT NULL,
                 mempool_size INTEGER NOT NULL,
-                mempool_tx_count INTEGER NOT NULL
+                mempool_tx_count INTEGER NOT NULL,
+                parent_txid BLOB
             )",
             [],
         )?;
@@ -91,7 +92,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn record_coinbase_tx(&self, tx: &Transaction) -> Result<()> {
+    pub(crate) fn record_coinbase_tx(&self, tx: &Transactions) -> Result<()> {
         let conn = self.0.get()?;
         if !tx.is_coinbase() {
             return Ok(());
@@ -111,10 +112,16 @@ impl Database {
         };
 
         let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-
+        // TODO missing fields: mempool_size, mempool_tx_count, txid
         conn.execute(
             "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![key_bytes, tx_inner_bytes],
+            params![
+                key_bytes,
+                tx_inner_bytes,
+                tx_inner.found_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
+                tx_inner.mined_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
+                tx_inner.pruned_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+            ],
         )?;
 
         Ok(())
@@ -126,7 +133,7 @@ impl Database {
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
 
-        let inputs_hash = get_inputs_hash(tx.input)?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let conn = self.0.get()?;
         let mined_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -187,8 +194,32 @@ impl Database {
             .unwrap()
             .as_secs();
 
+        for input in tx.input.iter() {
+            let parent_txid = input
+                .previous_output
+                .txid
+                .to_raw_hash()
+                .as_byte_array()
+                .to_vec();
+            // Check if txid is in the database
+            let txid_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1",
+                params![parent_txid],
+                |row| row.get(0),
+            )?;
+            if txid_exists {
+                // Update with parent txid
+                conn.execute(
+                    "UPDATE transactions SET parent_txid = ?1 WHERE tx_id = ?2",
+                    params![tx_id, parent_txid],
+                )?;
+            }
+        }
+
         conn.execute(
-            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_id, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO transactions
+            (inputs_hash, tx_id, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![inputs_hash, tx_id, tx_bytes, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count],
         )?;
 
