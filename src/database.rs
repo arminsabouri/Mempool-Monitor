@@ -2,10 +2,11 @@ use std::{time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{consensus::Encodable, Transaction, TxIn};
-use bitcoin_hashes::Sha256;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+
+use crate::utils::get_inputs_hash;
 
 #[derive(Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
@@ -114,7 +115,7 @@ impl Database {
     }
 
     pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
-        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let conn = self.0.get()?;
         let mined_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -129,7 +130,7 @@ impl Database {
     }
 
     pub(crate) fn record_pruned_tx(&self, tx: &Transaction) -> Result<()> {
-        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let conn = self.0.get()?;
         let tx_inner_bytes: Vec<u8> = conn.query_row(
             "SELECT tx_data FROM transactions WHERE inputs_hash = ?1",
@@ -157,7 +158,7 @@ impl Database {
         mempool_tx_count: u64,
     ) -> Result<()> {
         let conn = self.0.get()?;
-        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
 
@@ -185,7 +186,7 @@ impl Database {
 
     pub(crate) fn tx_exists(&self, tx: &Transaction) -> Result<bool> {
         let conn = self.0.get()?;
-        let inputs_hash = self.get_inputs_hash(tx.clone().input)?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
 
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM transactions WHERE inputs_hash = ?1",
@@ -198,7 +199,7 @@ impl Database {
 
     pub(crate) fn record_rbf(&self, transaction: Transaction, fee_total: u64) -> Result<()> {
         let conn = self.0.get()?;
-        let inputs_hash = self.get_inputs_hash(transaction.clone().input)?;
+        let inputs_hash = get_inputs_hash(transaction.clone().input)?;
         let created_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -210,19 +211,5 @@ impl Database {
         )?;
 
         Ok(())
-    }
-
-    fn get_inputs_hash(&self, inputs: impl IntoIterator<Item = TxIn>) -> Result<Vec<u8>> {
-        let mut engine = Sha256::engine();
-        for i in inputs {
-            let mut writer = vec![];
-            i.consensus_encode(&mut writer)
-                .expect("encoding doesn't error");
-            std::io::copy(&mut writer.as_slice(), &mut engine).expect("engine writes don't error");
-        }
-
-        let hash = Sha256::from_engine(engine);
-        let hash_bytes = hash.as_byte_array().to_vec();
-        Ok(hash_bytes)
     }
 }

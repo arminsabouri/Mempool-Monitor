@@ -5,6 +5,7 @@ use clap::Parser;
 
 mod app;
 mod database;
+mod utils;
 mod worker;
 
 // Command line arguments
