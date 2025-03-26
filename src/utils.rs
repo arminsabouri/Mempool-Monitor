@@ -1,7 +1,6 @@
-use bitcoin::{consensus::Encodable, Transaction, TxIn};
 use anyhow::Result;
+use bitcoin::{consensus::Encodable, Transaction, TxIn};
 use bitcoin_hashes::Sha256;
-
 
 // Prune tx witness in place
 pub fn prune_large_witnesses(tx: &mut Transaction) {

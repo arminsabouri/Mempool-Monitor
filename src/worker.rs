@@ -1,31 +1,21 @@
-use std::sync::Arc;
-
 use crate::database::Database;
 use anyhow::Result;
 use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
 use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use log::info;
-use tokio::sync::RwLock;
 
 pub struct TaskContext {
     bitcoind: Client,
     db: Database,
-    _lock: Arc<RwLock<()>>,
     raw_txs_rx: Receiver<Vec<u8>>,
 }
 
 impl TaskContext {
-    pub fn new(
-        bitcoind: Client,
-        db: Database,
-        _lock: Arc<RwLock<()>>,
-        raw_txs_rx: Receiver<Vec<u8>>,
-    ) -> Self {
+    pub fn new(bitcoind: Client, db: Database, raw_txs_rx: Receiver<Vec<u8>>) -> Self {
         Self {
             bitcoind,
             db,
-            _lock,
             raw_txs_rx,
         }
     }

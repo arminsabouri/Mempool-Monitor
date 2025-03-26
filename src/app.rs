@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 
 use crate::{database::Database, worker::TaskContext};
 use anyhow::Result;
@@ -10,7 +7,6 @@ use bitcoincore_zmq::MessageStream;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
 use log::info;
-use tokio::sync::RwLock;
 
 const NUM_WORKERS: usize = 2;
 
@@ -22,7 +18,6 @@ fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> 
 pub struct App {
     zmq: MessageStream,
     db: Database,
-    lock: Arc<RwLock<()>>,
     raw_txs_tx: Sender<Vec<u8>>,
     raw_txs_rx: Receiver<Vec<u8>>,
     bitcoind_url: String,
@@ -42,7 +37,6 @@ impl App {
             bitcoind_auth,
             zmq,
             db,
-            lock: Arc::new(RwLock::new(())),
             raw_txs_tx: sender,
             raw_txs_rx: receiver,
         }
@@ -72,12 +66,8 @@ impl App {
         let mut task_handles = vec![];
         for _ in 0..NUM_WORKERS {
             let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
-            let mut task_context = TaskContext::new(
-                bitcoind,
-                self.db.clone(),
-                self.lock.clone(),
-                self.raw_txs_rx.clone(),
-            );
+            let mut task_context =
+                TaskContext::new(bitcoind, self.db.clone(), self.raw_txs_rx.clone());
             task_handles.push(tokio::spawn(async move { task_context.run().await }));
         }
         Ok(())
