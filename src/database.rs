@@ -92,35 +92,46 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn record_coinbase_tx(&self, tx: &Transactions) -> Result<()> {
+    pub(crate) fn record_coinbase_tx(
+        &self,
+        tx: &Transaction,
+        mempool_size: u64,
+        mempool_tx_count: u64,
+    ) -> Result<()> {
         let conn = self.0.get()?;
         if !tx.is_coinbase() {
             return Ok(());
         }
 
-        let mut key_bytes = vec![];
-        tx.compute_txid()
-            .to_raw_hash()
-            .consensus_encode(&mut key_bytes)?;
-
-        let tx_inner = TransactionInner {
-            inner: tx.clone(),
-            found_at: SystemTime::now(),
-            mined_at: SystemTime::now(),
-            pruned_at: SystemTime::UNIX_EPOCH,
-            rbf_inner: Default::default(),
-        };
-
-        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
-        // TODO missing fields: mempool_size, mempool_tx_count, txid
+        // special case for coinbase tx, key is the txid
+        let key_bytes = tx.compute_txid().to_raw_hash().as_byte_array().to_vec();
+        let found_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mined_at = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let pruned_at = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut tx_bytes = vec![];
+        tx.consensus_encode(&mut tx_bytes)?;
         conn.execute(
-            "INSERT OR REPLACE INTO transactions (inputs_hash, tx_data, found_at, mined_at, pruned_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR REPLACE INTO transactions
+            (inputs_hash, tx_data, tx_id, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 key_bytes,
-                tx_inner_bytes,
-                tx_inner.found_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
-                tx_inner.mined_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
-                tx_inner.pruned_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+                tx_bytes,
+                key_bytes,
+                found_at,
+                mined_at,
+                pruned_at,
+                mempool_size,
+                mempool_tx_count,
             ],
         )?;
 

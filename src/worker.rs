@@ -36,13 +36,18 @@ impl TaskContext {
 
     pub async fn run(&mut self) -> Result<()> {
         while let Ok(raw_tx) = self.raw_txs_rx.recv().await {
+            let mempool_info = self.bitcoind.get_mempool_info()?;
             info!("Received raw tx");
             let tx_bytes = raw_tx;
             let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
             if tx.is_coinbase() {
                 info!("Record coinbase tx");
                 // Record coinbase sperately
-                self.db.record_coinbase_tx(&tx)?;
+                self.db.record_coinbase_tx(
+                    &tx,
+                    mempool_info.bytes as u64,
+                    mempool_info.size as u64,
+                )?;
                 self.db.flush()?;
                 continue;
             }
@@ -65,7 +70,6 @@ impl TaskContext {
                 continue;
             }
 
-            let mempool_info = self.bitcoind.get_mempool_info()?;
             self.db.insert_mempool_tx(
                 tx,
                 None,
