@@ -1,14 +1,18 @@
-use std::{time::SystemTime, vec};
+use std::{str::FromStr, time::SystemTime, vec};
 
 use anyhow::Result;
-use bitcoin::{consensus::Encodable, hashes::Hash, Transaction};
+use bitcoin::{
+    consensus::{Decodable, Encodable},
+    hashes::Hash,
+    Transaction, Txid,
+};
+use hex;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
-use serde::{Deserialize, Serialize};
 
 use crate::utils::{get_inputs_hash, prune_large_witnesses};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
 impl Database {
@@ -24,8 +28,8 @@ impl Database {
                 tx_id BLOB NOT NULL,
                 tx_data BLOB NOT NULL,
                 found_at INTEGER NOT NULL,
-                mined_at INTEGER NOT NULL,
-                pruned_at INTEGER NOT NULL,
+                mined_at INTEGER,
+                pruned_at INTEGER,
                 mempool_size INTEGER NOT NULL,
                 mempool_tx_count INTEGER NOT NULL,
                 parent_txid BLOB
@@ -68,7 +72,9 @@ impl Database {
         }
 
         // special case for coinbase tx, key is the txid
-        let key_bytes = tx.compute_txid().to_raw_hash().as_byte_array().to_vec();
+        let mut key_bytes = vec![];
+        tx.compute_txid().consensus_encode(&mut key_bytes)?;
+        let tx_id = hex::encode(key_bytes.clone());
         let found_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -77,23 +83,18 @@ impl Database {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let pruned_at = SystemTime::UNIX_EPOCH
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_data, tx_id, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (inputs_hash, tx_data, tx_id, found_at, mined_at, mempool_size, mempool_tx_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 key_bytes,
                 tx_bytes,
-                key_bytes,
+                tx_id,
                 found_at,
                 mined_at,
-                pruned_at,
                 mempool_size,
                 mempool_tx_count,
             ],
@@ -122,25 +123,76 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn record_pruned_tx(&self, tx: &Transaction) -> Result<()> {
-        let inputs_hash = get_inputs_hash(tx.clone().input)?;
+    pub(crate) fn txids_of_txs_not_in_list(&self, txids: Vec<Txid>) -> Result<Vec<Txid>> {
         let conn = self.0.get()?;
-        let tx_inner_bytes: Vec<u8> = conn.query_row(
-            "SELECT tx_data FROM transactions WHERE inputs_hash = ?1",
-            params![inputs_hash],
-            |row| row.get(0),
-        )?;
+        if txids.is_empty() {
+            let mut stmt = conn.prepare(
+                "SELECT tx_id FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL",
+            )?;
+            return Ok(stmt
+                .query_map([], |row| {
+                    let txid_str: String = row.get(0)?;
+                    let bytes: Vec<u8> = hex::decode(txid_str).expect("should be valid hex");
+                    let txid = Txid::consensus_decode(&mut bytes.as_slice()).expect("Valid txid");
 
-        // TODO add this back in
-        // let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
-        // tx_inner.pruned_at = SystemTime::now();
-        // let tx_inner_bytes = bincode::serialize(&tx_inner)?;
+                    Ok(txid)
+                })?
+                .collect::<Result<Vec<_>, _>>()?);
+        }
 
-        // conn.execute(
-        //     "UPDATE transactions SET tx_data = ?1 WHERE inputs_hash = ?2",
-        //     params![tx_inner_bytes, inputs_hash],
-        // )?;
+        let txid_list = txids
+            .iter()
+            .map(|txid| {
+                let mut writer = vec![];
+                txid.consensus_encode(&mut writer).expect("Valid txid");
+                format!("'{}'", hex::encode(writer))
+            })
+            .collect::<Vec<String>>()
+            .join(",");
 
+        let query = format!(
+            "SELECT tx_id FROM transactions WHERE tx_id NOT IN ({}) AND pruned_at IS NULL AND mined_at IS NULL",
+            txid_list
+        );
+
+        // Uncomment and fix the query execution
+        let mut stmt = conn.prepare(&query)?;
+        let txids = stmt
+            .query_map([], |row| {
+                let txid_str: String = row.get(0)?;
+                let bytes: Vec<u8> = hex::decode(txid_str).expect("should be valid hex");
+                let txid = Txid::consensus_decode(&mut bytes.as_slice()).expect("Valid txid");
+                Ok(txid)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(txids)
+    }
+
+    pub(crate) fn record_pruned_txs(&self, txids: Vec<Txid>) -> Result<()> {
+        if txids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.0.get()?;
+        let pruned_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let txid_list = txids
+            .iter()
+            .map(|txid| {
+                let mut writer = vec![];
+                txid.consensus_encode(&mut writer).expect("Valid txid");
+                format!("'{}'", hex::encode(writer))
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+        let query = format!(
+            "UPDATE transactions SET pruned_at = ?1 WHERE tx_id IN ({})",
+            txid_list
+        );
+        let mut stmt = conn.prepare(&query)?;
+        stmt.execute(params![pruned_at])?;
         Ok(())
     }
 
@@ -155,17 +207,12 @@ impl Database {
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
-        let tx_id = tx.compute_txid().to_raw_hash().as_byte_array().to_vec();
+        let tx_id = tx.compute_txid();
+        let mut tx_id_bytes = vec![];
+        tx_id.consensus_encode(&mut tx_id_bytes)?;
+        let tx_id = hex::encode(tx_id_bytes);
         let found_at = found_at
             .unwrap_or(SystemTime::UNIX_EPOCH)
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let mined_at = SystemTime::UNIX_EPOCH
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let pruned_at = SystemTime::UNIX_EPOCH
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
@@ -194,9 +241,16 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_id, tx_data, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![inputs_hash, tx_id, tx_bytes, found_at, mined_at, pruned_at, mempool_size, mempool_tx_count],
+            (inputs_hash, tx_id, tx_data, found_at, mempool_size, mempool_tx_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                inputs_hash,
+                tx_id,
+                tx_bytes,
+                found_at,
+                mempool_size,
+                mempool_tx_count
+            ],
         )?;
 
         Ok(())

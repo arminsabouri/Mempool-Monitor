@@ -1,9 +1,12 @@
 use std::time::{Duration, SystemTime};
 
-use crate::{database::Database, worker::TaskContext};
+use crate::{
+    database::Database,
+    worker::{Task, TaskContext},
+    BitcoinZmqFactory,
+};
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
-use bitcoincore_zmq::MessageStream;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
 use log::info;
@@ -15,11 +18,12 @@ fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> 
     Ok(bitcoind)
 }
 
+#[derive(Debug)]
 pub struct App {
-    zmq: MessageStream,
+    zmq_factory: BitcoinZmqFactory,
     db: Database,
-    raw_txs_tx: Sender<Vec<u8>>,
-    raw_txs_rx: Receiver<Vec<u8>>,
+    tasks_tx: Sender<Task>,
+    tasks_rx: Receiver<Task>,
     bitcoind_url: String,
     bitcoind_auth: Auth,
 }
@@ -28,17 +32,17 @@ impl App {
     pub fn new(
         bitcoind_url: String,
         bitcoind_auth: Auth,
-        zmq: MessageStream,
+        zmq_factory: BitcoinZmqFactory,
         db: Database,
     ) -> Self {
         let (sender, receiver) = bounded(10_000);
         Self {
             bitcoind_url,
             bitcoind_auth,
-            zmq,
+            zmq_factory,
             db,
-            raw_txs_tx: sender,
-            raw_txs_rx: receiver,
+            tasks_tx: sender,
+            tasks_rx: receiver,
         }
     }
 
@@ -52,7 +56,9 @@ impl App {
 
         for (txid, mempool_tx) in mempool.iter() {
             let pool_entrance_time = mempool_tx.time;
-            let tx = bitcoind.get_transaction(txid, None)?.transaction()?;
+            let tx = bitcoind
+                .get_raw_transaction_info(txid, None)?
+                .transaction()?;
             let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
             self.db
                 .insert_mempool_tx(tx, Some(found_at), mempool_size as u64, tx_count as u64)?;
@@ -67,7 +73,7 @@ impl App {
         for _ in 0..NUM_WORKERS {
             let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
             let mut task_context =
-                TaskContext::new(bitcoind, self.db.clone(), self.raw_txs_rx.clone());
+                TaskContext::new(bitcoind, self.db.clone(), self.tasks_rx.clone());
             task_handles.push(tokio::spawn(async move { task_context.run().await }));
         }
         Ok(())
@@ -75,19 +81,39 @@ impl App {
 
     pub async fn run(&mut self) -> Result<()> {
         info!("===== Starting mempool tracker =====");
-        while let Some(message) = self.zmq.next().await {
-            match message {
-                Ok(message) => {
-                    self.raw_txs_tx
-                        .send(message.serialize_data_to_vec())
-                        .await?;
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
+        let tasks_tx = self.tasks_tx.clone();
+        let prune_check_handle = tokio::spawn(async move {
+            loop {
+                tasks_tx.send(Task::PruneCheck).await?;
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
-        }
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        });
+        let mut zmq_message_stream = self.zmq_factory.connect()?;
 
+        let zmq_handle = {
+            let tasks_tx = self.tasks_tx.clone();
+            tokio::spawn(async move {
+                info!("Starting zmq handle");
+                while let Some(message) = zmq_message_stream.next().await {
+                    match message {
+                        Ok(message) => {
+                            tasks_tx
+                                .send(Task::RawTx(message.serialize_data_to_vec()))
+                                .await?;
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+        };
+
+        let _ = tokio::select! {
+            r = prune_check_handle => r?,
+            r = zmq_handle => r?,
+        };
         Ok(())
     }
 }
