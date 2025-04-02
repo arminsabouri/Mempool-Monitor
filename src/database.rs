@@ -11,42 +11,6 @@ use crate::utils::{get_inputs_hash, prune_large_witnesses};
 #[derive(Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RBFInner {
-    created_at: SystemTime,
-    fee_total: u64,
-}
-
-impl Default for RBFInner {
-    fn default() -> Self {
-        RBFInner {
-            created_at: SystemTime::UNIX_EPOCH,
-            fee_total: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TransactionInner {
-    pub inner: Transaction,
-    pub found_at: SystemTime,
-    pub mined_at: SystemTime,
-    pub pruned_at: SystemTime,
-    rbf_inner: Vec<RBFInner>,
-}
-
-impl TransactionInner {
-    pub(crate) fn new(tx: Transaction, found_at: Option<SystemTime>) -> Self {
-        Self {
-            inner: tx,
-            found_at: found_at.unwrap_or(SystemTime::UNIX_EPOCH),
-            mined_at: SystemTime::UNIX_EPOCH,
-            pruned_at: SystemTime::UNIX_EPOCH,
-            rbf_inner: vec![],
-        }
-    }
-}
-
 impl Database {
     pub(crate) fn new(path: &str) -> Result<Self> {
         let manager = SqliteConnectionManager::file(path);
@@ -167,14 +131,15 @@ impl Database {
             |row| row.get(0),
         )?;
 
-        let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
-        tx_inner.pruned_at = SystemTime::now();
-        let tx_inner_bytes = bincode::serialize(&tx_inner)?;
+        // TODO add this back in
+        // let mut tx_inner: TransactionInner = bincode::deserialize(&tx_inner_bytes)?;
+        // tx_inner.pruned_at = SystemTime::now();
+        // let tx_inner_bytes = bincode::serialize(&tx_inner)?;
 
-        conn.execute(
-            "UPDATE transactions SET tx_data = ?1 WHERE inputs_hash = ?2",
-            params![tx_inner_bytes, inputs_hash],
-        )?;
+        // conn.execute(
+        //     "UPDATE transactions SET tx_data = ?1 WHERE inputs_hash = ?2",
+        //     params![tx_inner_bytes, inputs_hash],
+        // )?;
 
         Ok(())
     }
