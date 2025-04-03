@@ -9,7 +9,7 @@ use hex;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 
-use crate::utils::{get_inputs_hash, prune_large_witnesses};
+use crate::utils::{get_inputs_hash, get_txid_hex, prune_large_witnesses};
 
 #[derive(Debug, Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
@@ -71,9 +71,7 @@ impl Database {
         }
 
         // special case for coinbase tx, key is the txid
-        let mut key_bytes = vec![];
-        tx.compute_txid().consensus_encode(&mut key_bytes)?;
-        let tx_id = hex::encode(key_bytes.clone());
+        let tx_id = get_txid_hex(&tx.compute_txid());
         let found_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -90,7 +88,7 @@ impl Database {
             (inputs_hash, tx_data, tx_id, found_at, mined_at, mempool_size, mempool_tx_count)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                key_bytes,
+                tx_id,
                 tx_str,
                 tx_id,
                 found_at,
@@ -181,12 +179,12 @@ impl Database {
         let txid_list = txids
             .iter()
             .map(|txid| {
-                let mut writer = vec![];
-                txid.consensus_encode(&mut writer).expect("Valid txid");
-                format!("'{}'", hex::encode(writer))
+                let txid_str = get_txid_hex(txid);
+                format!("'{}'", txid_str)
             })
             .collect::<Vec<String>>()
             .join(",");
+        println!("txid_list: {}", txid_list);
         let query = format!(
             "UPDATE transactions SET pruned_at = ?1 WHERE tx_id IN ({})",
             txid_list
@@ -209,10 +207,7 @@ impl Database {
         tx.consensus_encode(&mut tx_bytes)?;
         let tx_str = hex::encode(tx_bytes);
 
-        let tx_id = tx.compute_txid();
-        let mut tx_id_bytes = vec![];
-        tx_id.consensus_encode(&mut tx_id_bytes)?;
-        let tx_id = hex::encode(tx_id_bytes);
+        let tx_id = get_txid_hex(&tx.compute_txid());
         let found_at = found_at
             .unwrap_or(SystemTime::UNIX_EPOCH)
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -221,9 +216,7 @@ impl Database {
 
         for input in tx.input.iter() {
             let prev_txid = input.previous_output.txid;
-            let mut parent_txid_bytes = vec![];
-            prev_txid.consensus_encode(&mut parent_txid_bytes)?;
-            let parent_txid = hex::encode(parent_txid_bytes);
+            let parent_txid = get_txid_hex(&prev_txid);
             // Check if txid is in the database
             let txid_exists: bool = conn.query_row(
                 "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1",
