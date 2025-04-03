@@ -27,17 +27,8 @@ impl TaskContext {
     }
 
     fn get_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
-        // TODO: this should be handled on a non blocking thread. This could halt if there are many inputs
-        let out_total = tx.output.iter().map(|o| o.value).sum::<Amount>();
-        let mut in_total = Amount::ZERO;
-        for input in tx.input.iter() {
-            // TODO: handle coinbase inputs
-            let ot = input.previous_output;
-            let prev_tx = self.bitcoind.get_transaction(&ot.txid, None)?;
-            let prev_out = prev_tx.transaction()?.output[ot.vout as usize].value;
-            in_total += prev_out;
-        }
-        Ok(in_total - out_total)
+        let tx = self.bitcoind.get_mempool_entry(&tx.compute_txid())?;
+        Ok(tx.fees.base)
     }
 
     fn check_for_pruned_txs(&self) -> Result<()> {
@@ -86,7 +77,8 @@ impl TaskContext {
                             info!("Transaction was RBF'd: {:?}", txid);
                             let fee = self.get_transaction_fee(&tx)?;
                             info!("Fee: {}", fee);
-                            self.db.record_rbf(tx, fee.to_sat())?;
+                            self.db.record_rbf(&tx, fee.to_sat())?;
+                            self.db.update_txid_by_inputs_hash(&tx)?;
                         }
                         self.db.flush()?;
                         continue;

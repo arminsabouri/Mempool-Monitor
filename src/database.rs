@@ -258,7 +258,7 @@ impl Database {
         Ok(count > 0)
     }
 
-    pub(crate) fn record_rbf(&self, transaction: Transaction, fee_total: u64) -> Result<()> {
+    pub(crate) fn record_rbf(&self, transaction: &Transaction, fee_total: u64) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(transaction.clone().input)?;
         let created_at = now!();
@@ -266,6 +266,18 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total) VALUES (?1, ?2, ?3)",
             params![inputs_hash, created_at, fee_total],
+        )?;
+
+        Ok(())
+    }
+
+    pub(crate) fn update_txid_by_inputs_hash(&self, tx: &Transaction) -> Result<()> {
+        let conn = self.0.get()?;
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
+        let tx_id = get_txid_hex(&tx.compute_txid());
+        conn.execute(
+            "UPDATE transactions SET tx_id = ?1 WHERE inputs_hash = ?2",
+            params![tx_id, inputs_hash],
         )?;
 
         Ok(())
