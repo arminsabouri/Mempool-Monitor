@@ -11,6 +11,14 @@ use rusqlite::params;
 
 use crate::utils::{get_inputs_hash, get_txid_hex, prune_large_witnesses};
 
+macro_rules! now {
+    () => {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+}
 #[derive(Debug, Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
@@ -72,14 +80,8 @@ impl Database {
 
         // special case for coinbase tx, key is the txid
         let tx_id = get_txid_hex(&tx.compute_txid());
-        let found_at = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let mined_at = SystemTime::UNIX_EPOCH
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let found_at = now!();
+        let mined_at = now!();
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
         let tx_str = hex::encode(tx_bytes);
@@ -109,10 +111,7 @@ impl Database {
         tx.consensus_encode(&mut tx_bytes)?;
         let tx_str = hex::encode(tx_bytes);
         let conn = self.0.get()?;
-        let mined_at = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let mined_at = now!();
         conn.execute(
             "UPDATE transactions SET mined_at = ?1, tx_data = ?2 WHERE inputs_hash = ?3",
             params![mined_at, tx_str, inputs_hash],
@@ -172,10 +171,7 @@ impl Database {
             return Ok(());
         }
         let conn = self.0.get()?;
-        let pruned_at = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let pruned_at = now!();
         let txid_list = txids
             .iter()
             .map(|txid| {
@@ -265,10 +261,7 @@ impl Database {
     pub(crate) fn record_rbf(&self, transaction: Transaction, fee_total: u64) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(transaction.clone().input)?;
-        let created_at = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let created_at = now!();
 
         conn.execute(
             "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total) VALUES (?1, ?2, ?3)",
