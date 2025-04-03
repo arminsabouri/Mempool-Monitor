@@ -1,9 +1,8 @@
-use std::{str::FromStr, time::SystemTime, vec};
+use std::{time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{
     consensus::{Decodable, Encodable},
-    hashes::Hash,
     Transaction, Txid,
 };
 use hex;
@@ -24,15 +23,15 @@ impl Database {
         // Create tables if they don't exist
         conn.execute(
             "CREATE TABLE IF NOT EXISTS transactions (
-                inputs_hash BLOB PRIMARY KEY,
-                tx_id BLOB NOT NULL,
-                tx_data BLOB NOT NULL,
+                inputs_hash TEXT PRIMARY KEY,
+                tx_id TEXT NOT NULL,
+                tx_data TEXT NOT NULL,
                 found_at INTEGER NOT NULL,
                 mined_at INTEGER,
                 pruned_at INTEGER,
                 mempool_size INTEGER NOT NULL,
                 mempool_tx_count INTEGER NOT NULL,
-                parent_txid BLOB
+                parent_txid TEXT
             )",
             [],
         )?;
@@ -45,7 +44,7 @@ impl Database {
         // Create the rbf table if it doesn't exist
         conn.execute(
             "CREATE TABLE IF NOT EXISTS rbf (
-                inputs_hash BLOB PRIMARY KEY,
+                inputs_hash TEXT PRIMARY KEY,
                 created_at INTEGER NOT NULL,
                 fee_total INTEGER NOT NULL
             )",
@@ -85,13 +84,14 @@ impl Database {
             .as_secs();
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
+        let tx_str = hex::encode(tx_bytes);
         conn.execute(
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_data, tx_id, found_at, mined_at, mempool_size, mempool_tx_count)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 key_bytes,
-                tx_bytes,
+                tx_str,
                 tx_id,
                 found_at,
                 mined_at,
@@ -106,10 +106,10 @@ impl Database {
     pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
         let mut tx = tx.clone();
         prune_large_witnesses(&mut tx);
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
-
-        let inputs_hash = get_inputs_hash(tx.clone().input)?;
+        let tx_str = hex::encode(tx_bytes);
         let conn = self.0.get()?;
         let mined_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -117,7 +117,7 @@ impl Database {
             .as_secs();
         conn.execute(
             "UPDATE transactions SET mined_at = ?1, tx_data = ?2 WHERE inputs_hash = ?3",
-            params![mined_at, tx_bytes, inputs_hash],
+            params![mined_at, tx_str, inputs_hash],
         )?;
 
         Ok(())
@@ -207,6 +207,8 @@ impl Database {
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
+        let tx_str = hex::encode(tx_bytes);
+
         let tx_id = tx.compute_txid();
         let mut tx_id_bytes = vec![];
         tx_id.consensus_encode(&mut tx_id_bytes)?;
@@ -218,12 +220,10 @@ impl Database {
             .as_secs();
 
         for input in tx.input.iter() {
-            let parent_txid = input
-                .previous_output
-                .txid
-                .to_raw_hash()
-                .as_byte_array()
-                .to_vec();
+            let prev_txid = input.previous_output.txid;
+            let mut parent_txid_bytes = vec![];
+            prev_txid.consensus_encode(&mut parent_txid_bytes)?;
+            let parent_txid = hex::encode(parent_txid_bytes);
             // Check if txid is in the database
             let txid_exists: bool = conn.query_row(
                 "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1",
@@ -246,7 +246,7 @@ impl Database {
             params![
                 inputs_hash,
                 tx_id,
-                tx_bytes,
+                tx_str,
                 found_at,
                 mempool_size,
                 mempool_tx_count

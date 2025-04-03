@@ -9,7 +9,7 @@ pub fn prune_large_witnesses(tx: &mut Transaction) {
     });
 }
 
-pub fn get_inputs_hash(inputs: impl IntoIterator<Item = TxIn>) -> Result<Vec<u8>> {
+pub fn get_inputs_hash(inputs: impl IntoIterator<Item = TxIn>) -> Result<String> {
     let mut engine = Sha256::engine();
     for i in inputs {
         let mut writer = vec![];
@@ -20,5 +20,5 @@ pub fn get_inputs_hash(inputs: impl IntoIterator<Item = TxIn>) -> Result<Vec<u8>
 
     let hash = Sha256::from_engine(engine);
     let hash_bytes = hash.as_byte_array().to_vec();
-    Ok(hash_bytes)
+    Ok(hex::encode(hash_bytes))
 }
