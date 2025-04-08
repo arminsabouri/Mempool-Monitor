@@ -19,6 +19,14 @@ Example regtest run:
 cargo run -- --bitcoind-user foo --bitcoind-password bar --bitcoind-host "127.0.0.1" --bitcoind-rpc-port 18443 --bitcoind-zmq-port 28373
 ```
 
+## Building
+
+```bash
+docker run -it --rm -v "$PWD":/volume messense/rust-musl-cross:x86_64-musl
+cd /volume
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
 ## TODO
 
 - [X] Replace sled with something that allows you to query via versious indecies
