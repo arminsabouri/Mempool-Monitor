@@ -9,6 +9,7 @@ use log::info;
 pub enum Task {
     RawTx(Vec<u8>),
     PruneCheck,
+    MempoolState,
 }
 
 pub struct TaskContext {
@@ -44,23 +45,30 @@ impl TaskContext {
     pub async fn run(&mut self) -> Result<()> {
         while let Ok(task) = self.tasks.recv().await {
             match task {
+                Task::MempoolState => {
+                    info!("Mempool state task received");
+                    let mempool_info = self.bitcoind.get_mempool_info()?;
+                    let block_height = self.bitcoind.get_block_count()?;
+                    let block_hash = self.bitcoind.get_block_hash(block_height)?;
+                    self.db.record_mempool_state(
+                        mempool_info.bytes as u64,
+                        mempool_info.size as u64,
+                        block_height,
+                        block_hash,
+                    )?;
+                }
                 Task::PruneCheck => {
                     info!("Prune check task received");
                     self.check_for_pruned_txs()?;
                 }
                 Task::RawTx(raw_tx) => {
-                    let mempool_info = self.bitcoind.get_mempool_info()?;
                     info!("Received raw tx");
                     let tx_bytes = raw_tx;
                     let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
                     if tx.is_coinbase() {
                         info!("Record coinbase tx");
                         // Record coinbase sperately
-                        self.db.record_coinbase_tx(
-                            &tx,
-                            mempool_info.bytes as u64,
-                            mempool_info.size as u64,
-                        )?;
+                        self.db.record_coinbase_tx(&tx)?;
                         self.db.flush()?;
                         continue;
                     }
@@ -87,8 +95,6 @@ impl TaskContext {
                     self.db.insert_mempool_tx(
                         tx,
                         None,
-                        mempool_info.bytes as u64,
-                        mempool_info.size as u64,
                     )?;
                     self.db.flush()?;
                     info!("Transaction inserted: {:?}", txid);

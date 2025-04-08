@@ -2,8 +2,7 @@ use std::{time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{
-    consensus::{Decodable, Encodable},
-    Transaction, Txid,
+    consensus::{Decodable, Encodable}, BlockHash, Transaction, Txid
 };
 use hex;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -37,8 +36,6 @@ impl Database {
                 found_at INTEGER NOT NULL,
                 mined_at INTEGER,
                 pruned_at INTEGER,
-                mempool_size INTEGER NOT NULL,
-                mempool_tx_count INTEGER NOT NULL,
                 parent_txid TEXT
             )",
             [],
@@ -58,6 +55,20 @@ impl Database {
             )",
             [],
         )?;
+
+        // Create the mempool table if it doesn't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mempool (
+                tx_id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                tx_count INTEGER NOT NULL,
+                block_height INTEGER NOT NULL,
+                block_hash TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
         Ok(Self(pool))
     }
 
@@ -67,11 +78,28 @@ impl Database {
         Ok(())
     }
 
+    pub(crate) fn record_mempool_state(
+        &self,
+        mempool_size: u64,
+        mempool_tx_count: u64,
+        block_height: u64,
+        block_hash: BlockHash,
+    ) -> Result<()> {
+        let conn = self.0.get()?;
+        let now = now!();
+        let mut writer = vec![];
+        block_hash.consensus_encode(&mut writer)?;
+        let block_hash_str = hex::encode(writer);
+        conn.execute(
+            "INSERT OR REPLACE INTO mempool (created_at, size, tx_count, block_height, block_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![now, mempool_size, mempool_tx_count, block_height, block_hash_str],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn record_coinbase_tx(
         &self,
         tx: &Transaction,
-        mempool_size: u64,
-        mempool_tx_count: u64,
     ) -> Result<()> {
         let conn = self.0.get()?;
         if !tx.is_coinbase() {
@@ -87,16 +115,14 @@ impl Database {
         let tx_str = hex::encode(tx_bytes);
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_data, tx_id, found_at, mined_at, mempool_size, mempool_tx_count)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (inputs_hash, tx_data, tx_id, found_at, mined_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 tx_id,
                 tx_str,
                 tx_id,
                 found_at,
                 mined_at,
-                mempool_size,
-                mempool_tx_count,
             ],
         )?;
 
@@ -194,8 +220,6 @@ impl Database {
         &self,
         tx: Transaction,
         found_at: Option<SystemTime>,
-        mempool_size: u64,
-        mempool_tx_count: u64,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
@@ -230,15 +254,13 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_id, tx_data, found_at, mempool_size, mempool_tx_count)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (inputs_hash, tx_id, tx_data, found_at)
+            VALUES (?1, ?2, ?3, ?4)",
             params![
                 inputs_hash,
                 tx_id,
                 tx_str,
                 found_at,
-                mempool_size,
-                mempool_tx_count
             ],
         )?;
 

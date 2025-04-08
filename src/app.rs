@@ -50,9 +50,6 @@ impl App {
         let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
         let mempool = bitcoind.get_raw_mempool_verbose()?;
         info!("Found {} transactions in mempool", mempool.len());
-        let mempool_info = bitcoind.get_mempool_info()?;
-        let mempool_size = mempool_info.bytes;
-        let tx_count = mempool_info.size;
 
         for (txid, mempool_tx) in mempool.iter() {
             let pool_entrance_time = mempool_tx.time;
@@ -61,7 +58,7 @@ impl App {
                 .transaction()?;
             let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
             self.db
-                .insert_mempool_tx(tx, Some(found_at), mempool_size as u64, tx_count as u64)?;
+                .insert_mempool_tx(tx, Some(found_at))?;
         }
 
         Ok(())
@@ -82,9 +79,18 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         info!("===== Starting mempool tracker =====");
         let tasks_tx = self.tasks_tx.clone();
+        let tasks_tx_2 = self.tasks_tx.clone();
+        let mempool_state_handle = tokio::spawn(async move {
+            loop {
+                tasks_tx.send(Task::MempoolState).await?;
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        });
         let prune_check_handle = tokio::spawn(async move {
             loop {
-                tasks_tx.send(Task::PruneCheck).await?;
+                tasks_tx_2.send(Task::PruneCheck).await?;
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
             #[allow(unreachable_code)]
@@ -111,6 +117,7 @@ impl App {
         };
 
         let _ = tokio::select! {
+            r = mempool_state_handle => r?,
             r = prune_check_handle => r?,
             r = zmq_handle => r?,
         };
