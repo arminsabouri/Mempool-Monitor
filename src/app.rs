@@ -76,7 +76,13 @@ impl App {
     }
 
     pub fn init(&mut self) -> Result<()> {
+        // Extract existing mempool
         self.extract_existing_mempool()?;
+
+        // Any txs that are neither pruned nor mined should be removed
+        self.db.remove_stale_txs()?;
+
+        // Start workers
         let mut task_handles = vec![];
         for _ in 0..self.num_workers {
             let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;

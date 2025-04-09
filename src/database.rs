@@ -296,4 +296,16 @@ impl Database {
 
         Ok(())
     }
+
+    /// Remove txs that are neither pruned nor mined
+    /// This should be called when the system if first started
+    /// As the db may include old txs that have been pruned or mined
+    pub(crate) fn remove_stale_txs(&self) -> Result<()> {
+        let conn = self.0.get()?;
+        conn.execute(
+            "DELETE FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL",
+            [],
+        )?;
+        Ok(())
+    }
 }
