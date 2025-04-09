@@ -3,8 +3,29 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
 use bitcoind::bitcoincore_rpc::{Client, RpcApi};
-use log::{debug, info};
+use log::{debug, error, info};
 
+// Macro to execute a function, if its error, log it and continue
+macro_rules! log_error {
+    ($fn:expr, $arg:expr) => {
+        if let Err(e) = $fn($arg) {
+            error!("Error: {}", e);
+            continue;
+        }
+    };
+    ($fn:expr, $arg1:expr, $arg2:expr) => {
+        if let Err(e) = $fn($arg1, $arg2) {
+            error!("Error: {}", e);
+            continue;
+        }
+    };
+    ($fn:expr, $arg1:expr, $arg2:expr, $arg3:expr) => {
+        if let Err(e) = $fn($arg1, $arg2, $arg3) {
+            error!("Error: {}", e);
+            continue;
+        }
+    };
+}
 #[derive(Debug, Clone)]
 pub enum Task {
     RawTx(Vec<u8>),
@@ -50,16 +71,19 @@ impl TaskContext {
                     let mempool_info = self.bitcoind.get_mempool_info()?;
                     let block_height = self.bitcoind.get_block_count()?;
                     let block_hash = self.bitcoind.get_block_hash(block_height)?;
-                    self.db.record_mempool_state(
+                    if let Err(e) = self.db.record_mempool_state(
                         mempool_info.bytes as u64,
                         mempool_info.size as u64,
                         block_height,
                         block_hash,
-                    )?;
+                    ) {
+                        error!("Error recording mempool state: {}", e);
+                        continue;
+                    }
                 }
                 Task::PruneCheck => {
                     info!("Prune check task received");
-                    self.check_for_pruned_txs()?;
+                    log_error!(Self::check_for_pruned_txs, self);
                 }
                 Task::RawTx(raw_tx) => {
                     debug!("Received raw tx");
@@ -74,7 +98,13 @@ impl TaskContext {
                     }
 
                     let txid = tx.compute_txid();
-                    let tx_info = self.bitcoind.get_raw_transaction_info(&txid, None)?;
+                    let tx_info = match self.bitcoind.get_raw_transaction_info(&txid, None) {
+                        Ok(tx_info) => tx_info,
+                        Err(e) => {
+                            error!("Error getting transaction info: {}", e);
+                            continue;
+                        }
+                    };
                     let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
 
                     if self.db.tx_exists(&tx)? {
@@ -83,7 +113,13 @@ impl TaskContext {
                             info!("Transaction was mined: {:?}", txid);
                         } else {
                             info!("Transaction was RBF'd: {:?}", txid);
-                            let fee = self.get_transaction_fee(&tx)?;
+                            let fee = match self.get_transaction_fee(&tx) {
+                                Ok(fee) => fee,
+                                Err(e) => {
+                                    error!("Error getting transaction fee: {}", e);
+                                    continue;
+                                }
+                            };
                             debug!("Fee: {}", fee);
                             self.db.record_rbf(&tx, fee.to_sat())?;
                             self.db.update_txid_by_inputs_hash(&tx)?;

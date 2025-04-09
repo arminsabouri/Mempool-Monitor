@@ -9,7 +9,7 @@ use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
-use log::info;
+use log::{error, info};
 use tokio::signal::ctrl_c;
 
 fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> {
@@ -55,11 +55,21 @@ impl App {
 
         for (txid, mempool_tx) in mempool.iter() {
             let pool_entrance_time = mempool_tx.time;
-            let tx = bitcoind
-                .get_raw_transaction_info(txid, None)?
-                .transaction()?;
-            let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
-            self.db.insert_mempool_tx(tx, Some(found_at))?;
+            match bitcoind.get_raw_transaction_info(txid, None) {
+                Ok(tx_info) => match tx_info.transaction() {
+                    Ok(tx) => {
+                        let found_at =
+                            SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
+                        self.db.insert_mempool_tx(tx, Some(found_at))?;
+                    }
+                    Err(e) => {
+                        error!("Error getting transaction info: {}", e);
+                    }
+                },
+                Err(e) => {
+                    error!("Error getting transaction info: {}", e);
+                }
+            }
         }
 
         Ok(())
