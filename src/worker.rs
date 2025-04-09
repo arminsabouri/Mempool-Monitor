@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
 use bitcoind::bitcoincore_rpc::{Client, RpcApi};
-use log::info;
+use log::{debug, info};
 
 #[derive(Debug, Clone)]
 pub enum Task {
@@ -62,7 +62,7 @@ impl TaskContext {
                     self.check_for_pruned_txs()?;
                 }
                 Task::RawTx(raw_tx) => {
-                    info!("Received raw tx");
+                    debug!("Received raw tx");
                     let tx_bytes = raw_tx;
                     let tx = Transaction::consensus_decode(&mut tx_bytes.as_slice())?;
                     if tx.is_coinbase() {
@@ -80,11 +80,11 @@ impl TaskContext {
                     if self.db.tx_exists(&tx)? {
                         if is_mined {
                             self.db.record_mined_tx(&tx)?;
-                            info!("Transaction already exists: {:?}", txid);
+                            info!("Transaction was mined: {:?}", txid);
                         } else {
                             info!("Transaction was RBF'd: {:?}", txid);
                             let fee = self.get_transaction_fee(&tx)?;
-                            info!("Fee: {}", fee);
+                            debug!("Fee: {}", fee);
                             self.db.record_rbf(&tx, fee.to_sat())?;
                             self.db.update_txid_by_inputs_hash(&tx)?;
                         }
@@ -98,6 +98,7 @@ impl TaskContext {
                 }
             }
         }
+        info!("Worker shutting down");
         Ok(())
     }
 }

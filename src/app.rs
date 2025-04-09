@@ -10,6 +10,7 @@ use async_channel::{bounded, Receiver, Sender};
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
 use log::info;
+use tokio::signal::ctrl_c;
 
 fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> {
     let bitcoind = Client::new(bitcoind_host, bitcoind_auth)?;
@@ -80,47 +81,88 @@ impl App {
         info!("===== Starting mempool tracker =====");
         let tasks_tx = self.tasks_tx.clone();
         let tasks_tx_2 = self.tasks_tx.clone();
-        let mempool_state_handle = tokio::spawn(async move {
-            loop {
-                tasks_tx.send(Task::MempoolState).await?;
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        });
-        let prune_check_handle = tokio::spawn(async move {
-            loop {
-                tasks_tx_2.send(Task::PruneCheck).await?;
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        });
-        let mut zmq_message_stream = self.zmq_factory.connect()?;
+        let tasks_tx_3 = self.tasks_tx.clone();
 
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+        let shutdown_rx_1 = shutdown_tx.subscribe();
+        let shutdown_rx_2 = shutdown_tx.subscribe();
+        let shutdown_rx_3 = shutdown_tx.subscribe();
+
+        let mempool_state_handle = tokio::spawn(async move {
+            let mut shutdown = shutdown_rx_1;
+            loop {
+                tokio::select! {
+                    _ = shutdown.recv() => {
+                        info!("Shutting down mempool state task");
+                        break;
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                        tasks_tx.send(Task::MempoolState).await?;
+                    }
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let prune_check_handle = tokio::spawn(async move {
+            let mut shutdown = shutdown_rx_2;
+            loop {
+                tokio::select! {
+                    _ = shutdown.recv() => {
+                        info!("Shutting down prune check task");
+                        break;
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        tasks_tx_2.send(Task::PruneCheck).await?;
+                    }
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let mut zmq_message_stream = self.zmq_factory.connect()?;
         let zmq_handle = {
-            let tasks_tx = self.tasks_tx.clone();
+            let mut shutdown = shutdown_rx_3;
             tokio::spawn(async move {
                 info!("Starting zmq handle");
-                while let Some(message) = zmq_message_stream.next().await {
-                    match message {
-                        Ok(message) => {
-                            tasks_tx
-                                .send(Task::RawTx(message.serialize_data_to_vec()))
-                                .await?;
+                loop {
+                    tokio::select! {
+                        _ = shutdown.recv() => {
+                            info!("Shutting down zmq handle");
+                            break;
                         }
-                        Err(e) => return Err(e.into()),
+                        message = zmq_message_stream.next() => {
+                            match message {
+                                Some(Ok(message)) => {
+                                    tasks_tx_3.send(Task::RawTx(message.serialize_data_to_vec())).await?;
+                                }
+                                Some(Err(e)) => return Err(e.into()),
+                                None => break,
+                            }
+                        }
                     }
                 }
                 Ok::<(), anyhow::Error>(())
             })
         };
 
-        let _ = tokio::select! {
-            r = mempool_state_handle => r?,
-            r = prune_check_handle => r?,
-            r = zmq_handle => r?,
-        };
+        // Wait for ctrl-c
+        tokio::select! {
+            _ = ctrl_c() => {
+                info!("Received shutdown signal");
+                shutdown_tx.send(())?;
+            }
+            r = mempool_state_handle => r??,
+            r = prune_check_handle => r??,
+            r = zmq_handle => r??,
+        }
+
+        // Clean up
+        info!("Shutting down workers...");
+        self.tasks_tx.close();
+        self.db.flush()?;
+        info!("Shutdown complete");
+
         Ok(())
     }
 }
