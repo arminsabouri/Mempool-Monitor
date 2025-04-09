@@ -272,6 +272,11 @@ impl Database {
         let inputs_hash = get_inputs_hash(transaction.clone().input)?;
         let created_at = now!();
 
+        // If input_hash is not in the database, ignore this
+        if !self.tx_exists(transaction)? {
+            return Ok(());
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total) VALUES (?1, ?2, ?3)",
             params![inputs_hash, created_at, fee_total],
