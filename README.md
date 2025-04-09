@@ -22,9 +22,7 @@ cargo run -- --bitcoind-user foo --bitcoind-password bar --bitcoind-host "127.0.
 ## Building
 
 ```bash
-docker run -it --rm -v "$PWD":/volume messense/rust-musl-cross:x86_64-musl
-cd /volume
-cargo build --release --target x86_64-unknown-linux-musl
+docker run --rm -it -v "$PWD":/volume -w /volume messense/rust-musl-cross:x86_64-musl cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 ## TODO
@@ -37,4 +35,4 @@ cargo build --release --target x86_64-unknown-linux-musl
 - [ ] Same inputs being spent in other tx
 - [X] prune large witnesses
 - [X] Capture mempool size and tx count at the time of entry and exit
-- [ ] Some CI checks: Lint, clippy, future tests
+- [X] Some CI checks: Lint, clippy, future tests
