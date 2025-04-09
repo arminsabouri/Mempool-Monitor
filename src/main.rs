@@ -21,6 +21,8 @@ struct Args {
     bitcoind_rpc_port: u16,
     #[clap(long)]
     bitcoind_zmq_port: u16,
+    #[clap(long, default_value_t = 2)]
+    num_workers: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +59,13 @@ async fn main() -> Result<()> {
     let db = database::Database::new("mempool-tracker.db")?;
     let auth = Auth::UserPass(args.bitcoind_user, args.bitcoind_password);
     let bitcoind_url = format!("http://{}:{}", args.bitcoind_host, args.bitcoind_rpc_port);
-    let mut app = app::App::new(bitcoind_url, auth, zmq_factory, db);
+    let mut app = app::App::new(
+        bitcoind_url,
+        auth,
+        zmq_factory,
+        db,
+        args.num_workers as usize,
+    );
 
     app.init()?;
     app.run().await?;

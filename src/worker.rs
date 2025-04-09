@@ -92,10 +92,7 @@ impl TaskContext {
                         continue;
                     }
 
-                    self.db.insert_mempool_tx(
-                        tx,
-                        None,
-                    )?;
+                    self.db.insert_mempool_tx(tx, None)?;
                     self.db.flush()?;
                     info!("Transaction inserted: {:?}", txid);
                 }

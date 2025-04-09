@@ -11,8 +11,6 @@ use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use futures_util::StreamExt;
 use log::info;
 
-const NUM_WORKERS: usize = 2;
-
 fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> {
     let bitcoind = Client::new(bitcoind_host, bitcoind_auth)?;
     Ok(bitcoind)
@@ -26,6 +24,7 @@ pub struct App {
     tasks_rx: Receiver<Task>,
     bitcoind_url: String,
     bitcoind_auth: Auth,
+    num_workers: usize,
 }
 
 impl App {
@@ -34,8 +33,9 @@ impl App {
         bitcoind_auth: Auth,
         zmq_factory: BitcoinZmqFactory,
         db: Database,
+        num_workers: usize,
     ) -> Self {
-        let (sender, receiver) = bounded(10_000);
+        let (sender, receiver) = bounded(100_000);
         Self {
             bitcoind_url,
             bitcoind_auth,
@@ -43,6 +43,7 @@ impl App {
             db,
             tasks_tx: sender,
             tasks_rx: receiver,
+            num_workers,
         }
     }
 
@@ -57,8 +58,7 @@ impl App {
                 .get_raw_transaction_info(txid, None)?
                 .transaction()?;
             let found_at = SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
-            self.db
-                .insert_mempool_tx(tx, Some(found_at))?;
+            self.db.insert_mempool_tx(tx, Some(found_at))?;
         }
 
         Ok(())
@@ -67,7 +67,7 @@ impl App {
     pub fn init(&mut self) -> Result<()> {
         self.extract_existing_mempool()?;
         let mut task_handles = vec![];
-        for _ in 0..NUM_WORKERS {
+        for _ in 0..self.num_workers {
             let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
             let mut task_context =
                 TaskContext::new(bitcoind, self.db.clone(), self.tasks_rx.clone());

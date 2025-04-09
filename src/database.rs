@@ -2,7 +2,8 @@ use std::{time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{
-    consensus::{Decodable, Encodable}, BlockHash, Transaction, Txid
+    consensus::{Decodable, Encodable},
+    BlockHash, Transaction, Txid,
 };
 use hex;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -68,7 +69,7 @@ impl Database {
             )",
             [],
         )?;
-        
+
         Ok(Self(pool))
     }
 
@@ -97,10 +98,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn record_coinbase_tx(
-        &self,
-        tx: &Transaction,
-    ) -> Result<()> {
+    pub(crate) fn record_coinbase_tx(&self, tx: &Transaction) -> Result<()> {
         let conn = self.0.get()?;
         if !tx.is_coinbase() {
             return Ok(());
@@ -117,13 +115,7 @@ impl Database {
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_data, tx_id, found_at, mined_at)
             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                tx_id,
-                tx_str,
-                tx_id,
-                found_at,
-                mined_at,
-            ],
+            params![tx_id, tx_str, tx_id, found_at, mined_at,],
         )?;
 
         Ok(())
@@ -256,12 +248,7 @@ impl Database {
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_id, tx_data, found_at)
             VALUES (?1, ?2, ?3, ?4)",
-            params![
-                inputs_hash,
-                tx_id,
-                tx_str,
-                found_at,
-            ],
+            params![inputs_hash, tx_id, tx_str, found_at,],
         )?;
 
         Ok(())
