@@ -19,6 +19,14 @@ macro_rules! now {
             .as_secs()
     };
 }
+
+
+/// Versioning the database, scheme should be backwards compatible
+/// But may not always be forwards compatible
+const MEMPOOL_TRANSACTION_VERSION: u32 = 0;
+const RBF_TRANSACTION_VERSION: u32 = 0;
+const COINBASE_TRANSACTION_VERSION: u32 = 0;
+
 #[derive(Debug, Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
@@ -37,7 +45,8 @@ impl Database {
                 found_at INTEGER NOT NULL,
                 mined_at INTEGER,
                 pruned_at INTEGER,
-                parent_txid TEXT
+                parent_txid TEXT,
+                version INTEGER NOT NULL
             )",
             [],
         )?;
@@ -52,7 +61,8 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS rbf (
                 inputs_hash TEXT PRIMARY KEY,
                 created_at INTEGER NOT NULL,
-                fee_total INTEGER NOT NULL
+                fee_total INTEGER NOT NULL,
+                version INTEGER NOT NULL
             )",
             [],
         )?;
@@ -65,7 +75,8 @@ impl Database {
                 size INTEGER NOT NULL,
                 tx_count INTEGER NOT NULL,
                 block_height INTEGER NOT NULL,
-                block_hash TEXT NOT NULL
+                block_hash TEXT NOT NULL,
+                version INTEGER NOT NULL
             )",
             [],
         )?;
@@ -92,8 +103,8 @@ impl Database {
         block_hash.consensus_encode(&mut writer)?;
         let block_hash_str = hex::encode(writer);
         conn.execute(
-            "INSERT OR REPLACE INTO mempool (created_at, size, tx_count, block_height, block_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![now, mempool_size, mempool_tx_count, block_height, block_hash_str],
+            "INSERT OR REPLACE INTO mempool (created_at, size, tx_count, block_height, block_hash, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![now, mempool_size, mempool_tx_count, block_height, block_hash_str, MEMPOOL_TRANSACTION_VERSION],
         )?;
         Ok(())
     }
@@ -113,9 +124,9 @@ impl Database {
         let tx_str = hex::encode(tx_bytes);
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_data, tx_id, found_at, mined_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![tx_id, tx_str, tx_id, found_at, mined_at,],
+            (inputs_hash, tx_data, tx_id, found_at, mined_at, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![tx_id, tx_str, tx_id, found_at, mined_at, COINBASE_TRANSACTION_VERSION],
         )?;
 
         Ok(())
@@ -170,7 +181,6 @@ impl Database {
             txid_list
         );
 
-        // Uncomment and fix the query execution
         let mut stmt = conn.prepare(&query)?;
         let txids = stmt
             .query_map([], |row| {
@@ -246,9 +256,9 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_id, tx_data, found_at)
-            VALUES (?1, ?2, ?3, ?4)",
-            params![inputs_hash, tx_id, tx_str, found_at,],
+            (inputs_hash, tx_id, tx_data, found_at, version)
+            VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![inputs_hash, tx_id, tx_str, found_at, MEMPOOL_TRANSACTION_VERSION],
         )?;
 
         Ok(())
@@ -278,8 +288,8 @@ impl Database {
         }
 
         conn.execute(
-            "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total) VALUES (?1, ?2, ?3)",
-            params![inputs_hash, created_at, fee_total],
+            "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total, version) VALUES (?1, ?2, ?3, ?4)",
+            params![inputs_hash, created_at, fee_total, RBF_TRANSACTION_VERSION],
         )?;
 
         Ok(())
