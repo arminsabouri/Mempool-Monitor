@@ -27,12 +27,12 @@ docker run --rm -it -v "$PWD":/volume -w /volume messense/rust-musl-cross:x86_64
 
 ## TODO
 
-- [X] Replace sled with something that allows you to query via versious indecies
+- [X] Replace sled with something that allows you to query via various indecies
 - [X] multi-threading
 - [ ] add tests
 - [X] add record CPFP
 - [X] Track prune
-- [ ] Same inputs being spent in other tx
 - [X] prune large witnesses
 - [X] Capture mempool size and tx count at the time of entry and exit
 - [X] Some CI checks: Lint, clippy, future tests
+- [X] Do not panic if rpc fails
