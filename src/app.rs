@@ -3,8 +3,10 @@ use std::time::{Duration, SystemTime};
 use crate::{
     database::Database,
     worker::{Task, TaskContext},
-    BitcoinZmqFactory,
+    zmq_factory::BitcoinZmqFactory,
 };
+
+
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -76,6 +78,7 @@ impl App {
     }
 
     pub fn init(&mut self) -> Result<()> {
+        info!("Initializing mempool tracker");
         // Any txs that are neither pruned nor mined should be removed
         self.db.remove_stale_txs()?;
         // Extract existing mempool

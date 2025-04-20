@@ -31,7 +31,7 @@ const COINBASE_TRANSACTION_VERSION: u32 = 0;
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
 
 impl Database {
-    pub(crate) fn new(path: &str) -> Result<Self> {
+    pub fn new(path: &str) -> Result<Self> {
         let manager = SqliteConnectionManager::file(path);
         let pool = r2d2::Pool::new(manager)?;
         let conn = pool.get()?;
@@ -318,4 +318,15 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // TODO: not used for now
+    // pub fn get_tx_by_txid(&self, txid: &bitcoin::Txid) -> Result<Option<Transaction>> {
+    //     let conn = self.0.get()?;
+    //     let mut stmt = conn.prepare("SELECT tx_data FROM transactions WHERE tx_id = ?1")?;
+    //     let tx_data: Option<String> = stmt.query_row(params![txid.to_string()], |row| row.get(0))?;
+    //     Ok(tx_data.map(|data| {
+    //         let mut bytes = hex::decode(data).expect("should be valid hex");
+    //         Transaction::consensus_decode(&mut bytes.as_slice()).expect("Valid transaction")
+    //     }))
+    // }
 }

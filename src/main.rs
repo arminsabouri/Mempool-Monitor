@@ -1,12 +1,13 @@
 use anyhow::Result;
-use bitcoincore_zmq::{self, MessageStream};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
+use zmq_factory::BitcoinZmqFactory;
 
 mod app;
 mod database;
 mod utils;
 mod worker;
+mod zmq_factory;
 
 // Command line arguments
 #[derive(Clone, Debug, Parser)]
@@ -23,29 +24,6 @@ struct Args {
     bitcoind_zmq_port: u16,
     #[clap(long, default_value_t = 2)]
     num_workers: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct BitcoinZmqFactory {
-    bitcoind_host: String,
-    bitcoind_zmq_port: u16,
-}
-
-impl BitcoinZmqFactory {
-    pub fn new(bitcoind_host: String, bitcoind_zmq_port: u16) -> Self {
-        Self {
-            bitcoind_host,
-            bitcoind_zmq_port,
-        }
-    }
-
-    pub fn connect(&self) -> Result<MessageStream> {
-        let zmq = bitcoincore_zmq::subscribe_async(&[&format!(
-            "tcp://{}:{}",
-            self.bitcoind_host, self.bitcoind_zmq_port
-        )])?;
-        Ok(zmq)
-    }
 }
 
 #[tokio::main]
