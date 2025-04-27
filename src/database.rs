@@ -8,8 +8,13 @@ use bitcoin::{
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension};
 
-use crate::utils::{get_inputs_hash, prune_large_witnesses};
+use crate::{
+    migrations::run_migrations,
+    utils::{get_inputs_hash, prune_large_witnesses},
+};
 use log::info;
+
+#[macro_export]
 macro_rules! now {
     () => {
         SystemTime::now()
@@ -79,6 +84,14 @@ impl Database {
             [],
         )?;
 
+        // Migrations table tracking what migrations have been applied
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS migrations (
+                id TEXT PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
         Ok(Self(pool))
     }
 
@@ -253,7 +266,7 @@ impl Database {
             if txid_exists {
                 // Update with parent txid
                 conn.execute(
-                    "UPDATE transactions SET parent_txid = ?1 WHERE tx_id = ?2",
+                    "UPDATE transactions SET child_txid = ?1 WHERE tx_id = ?2",
                     params![tx_id, parent_txid],
                 )?;
             }
@@ -327,6 +340,12 @@ impl Database {
             "DELETE FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL",
             [],
         )?;
+        Ok(())
+    }
+
+    pub(crate) fn run_migrations(&self) -> Result<()> {
+        let conn = self.0.get()?;
+        run_migrations(&conn)?;
         Ok(())
     }
 

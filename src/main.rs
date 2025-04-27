@@ -5,6 +5,7 @@ use zmq_factory::BitcoinZmqFactory;
 
 mod app;
 mod database;
+mod migrations;
 mod utils;
 mod worker;
 mod zmq_factory;

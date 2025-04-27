@@ -78,9 +78,14 @@ impl App {
 
     pub fn init(&mut self) -> Result<()> {
         info!("Initializing mempool tracker");
+        // Run migrations
+        info!("Running migrations");
+        self.db.run_migrations()?;
         // Any txs that are neither pruned nor mined should be removed
+        info!("Removing stale txs");
         self.db.remove_stale_txs()?;
         // Extract existing mempool
+        info!("Extracting existing mempool");
         self.extract_existing_mempool()?;
         // Start workers
         let mut task_handles = vec![];

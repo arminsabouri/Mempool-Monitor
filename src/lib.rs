@@ -1,5 +1,6 @@
 pub mod app;
 pub mod database;
+pub mod migrations;
 pub mod utils;
 pub mod worker;
 pub mod zmq_factory;
