@@ -19,7 +19,6 @@ macro_rules! now {
     };
 }
 
-
 /// Versioning the database, scheme should be backwards compatible
 /// But may not always be forwards compatible
 const MEMPOOL_TRANSACTION_VERSION: u32 = 1;
@@ -125,7 +124,14 @@ impl Database {
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_data, tx_id, found_at, mined_at, version)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![tx_id, tx_str, tx_id, found_at, mined_at, COINBASE_TRANSACTION_VERSION],
+            params![
+                tx_id,
+                tx_str,
+                tx_id,
+                found_at,
+                mined_at,
+                COINBASE_TRANSACTION_VERSION
+            ],
         )?;
 
         Ok(())
@@ -240,8 +246,7 @@ impl Database {
             let parent_txid = prev_txid.to_string();
             // Check if txid is in the database
             let txid_exists: bool = conn.query_row(
-                // TODO: and check its not mined
-                "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1",
+                "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1 AND mined_at is NULL",
                 params![parent_txid],
                 |row| row.get(0),
             )?;
@@ -258,7 +263,13 @@ impl Database {
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_id, tx_data, found_at, version)
             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![inputs_hash, tx_id, tx_str, found_at, MEMPOOL_TRANSACTION_VERSION],
+            params![
+                inputs_hash,
+                tx_id,
+                tx_str,
+                found_at,
+                MEMPOOL_TRANSACTION_VERSION
+            ],
         )?;
 
         Ok(())
@@ -324,7 +335,9 @@ impl Database {
         let conn = self.0.get()?;
         let txid_hex = txid.to_string();
         let mut stmt = conn.prepare("SELECT tx_data FROM transactions WHERE tx_id = ?1")?;
-        let tx_data: Option<String> = stmt.query_row(params![txid_hex], |row| row.get(0)).optional()?;
+        let tx_data: Option<String> = stmt
+            .query_row(params![txid_hex], |row| row.get(0))
+            .optional()?;
 
         Ok(tx_data.map(|data| {
             let bytes = hex::decode(data).expect("should be valid hex");

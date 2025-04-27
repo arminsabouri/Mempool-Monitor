@@ -6,7 +6,6 @@ use crate::{
     zmq_factory::BitcoinZmqFactory,
 };
 
-
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
