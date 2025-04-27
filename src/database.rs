@@ -5,12 +5,11 @@ use bitcoin::{
     consensus::{Decodable, Encodable},
     BlockHash, Transaction, Txid,
 };
-use hex;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
-use crate::utils::{get_inputs_hash, get_txid_hex, prune_large_witnesses};
-
+use crate::utils::{get_inputs_hash, prune_large_witnesses};
+use log::info;
 macro_rules! now {
     () => {
         SystemTime::now()
@@ -23,7 +22,7 @@ macro_rules! now {
 
 /// Versioning the database, scheme should be backwards compatible
 /// But may not always be forwards compatible
-const MEMPOOL_TRANSACTION_VERSION: u32 = 0;
+const MEMPOOL_TRANSACTION_VERSION: u32 = 1;
 const RBF_TRANSACTION_VERSION: u32 = 0;
 const COINBASE_TRANSACTION_VERSION: u32 = 0;
 
@@ -116,7 +115,7 @@ impl Database {
         }
 
         // special case for coinbase tx, key is the txid
-        let tx_id = get_txid_hex(&tx.compute_txid());
+        let tx_id = tx.compute_txid().to_string();
         let found_at = now!();
         let mined_at = now!();
         let mut tx_bytes = vec![];
@@ -203,12 +202,12 @@ impl Database {
         let txid_list = txids
             .iter()
             .map(|txid| {
-                let txid_str = get_txid_hex(txid);
+                let txid_str = txid.to_string();
                 format!("'{}'", txid_str)
             })
             .collect::<Vec<String>>()
             .join(",");
-        println!("txid_list: {}", txid_list);
+        info!("txid_list: {}", txid_list);
         let query = format!(
             "UPDATE transactions SET pruned_at = ?1 WHERE tx_id IN ({})",
             txid_list
@@ -229,7 +228,7 @@ impl Database {
         tx.consensus_encode(&mut tx_bytes)?;
         let tx_str = hex::encode(tx_bytes);
 
-        let tx_id = get_txid_hex(&tx.compute_txid());
+        let tx_id = tx.compute_txid().to_string();
         let found_at = found_at
             .unwrap_or(SystemTime::UNIX_EPOCH)
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -238,9 +237,10 @@ impl Database {
 
         for input in tx.input.iter() {
             let prev_txid = input.previous_output.txid;
-            let parent_txid = get_txid_hex(&prev_txid);
+            let parent_txid = prev_txid.to_string();
             // Check if txid is in the database
             let txid_exists: bool = conn.query_row(
+                // TODO: and check its not mined
                 "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1",
                 params![parent_txid],
                 |row| row.get(0),
@@ -298,7 +298,7 @@ impl Database {
     pub(crate) fn update_txid_by_inputs_hash(&self, tx: &Transaction) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
-        let tx_id = get_txid_hex(&tx.compute_txid());
+        let tx_id = tx.compute_txid().to_string();
         conn.execute(
             "UPDATE transactions SET tx_id = ?1 WHERE inputs_hash = ?2",
             params![tx_id, inputs_hash],
@@ -319,14 +319,16 @@ impl Database {
         Ok(())
     }
 
-    // TODO: not used for now
-    // pub fn get_tx_by_txid(&self, txid: &bitcoin::Txid) -> Result<Option<Transaction>> {
-    //     let conn = self.0.get()?;
-    //     let mut stmt = conn.prepare("SELECT tx_data FROM transactions WHERE tx_id = ?1")?;
-    //     let tx_data: Option<String> = stmt.query_row(params![txid.to_string()], |row| row.get(0))?;
-    //     Ok(tx_data.map(|data| {
-    //         let mut bytes = hex::decode(data).expect("should be valid hex");
-    //         Transaction::consensus_decode(&mut bytes.as_slice()).expect("Valid transaction")
-    //     }))
-    // }
+    #[allow(dead_code)]
+    pub fn get_tx_by_txid(&self, txid: &Txid) -> Result<Option<Transaction>> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let mut stmt = conn.prepare("SELECT tx_data FROM transactions WHERE tx_id = ?1")?;
+        let tx_data: Option<String> = stmt.query_row(params![txid_hex], |row| row.get(0)).optional()?;
+
+        Ok(tx_data.map(|data| {
+            let bytes = hex::decode(data).expect("should be valid hex");
+            Transaction::consensus_decode(&mut bytes.as_slice()).expect("Valid transaction")
+        }))
+    }
 }
