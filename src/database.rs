@@ -1,4 +1,4 @@
-use std::{time::SystemTime, vec};
+use std::{str::FromStr, time::SystemTime, vec};
 
 use anyhow::Result;
 use bitcoin::{
@@ -186,11 +186,7 @@ impl Database {
 
         let txid_list = txids
             .iter()
-            .map(|txid| {
-                let mut writer = vec![];
-                txid.consensus_encode(&mut writer).expect("Valid txid");
-                format!("'{}'", hex::encode(writer))
-            })
+            .map(|txid| format!("'{}'", txid.to_string()))
             .collect::<Vec<String>>()
             .join(",");
 
@@ -203,8 +199,7 @@ impl Database {
         let txids = stmt
             .query_map([], |row| {
                 let txid_str: String = row.get(0)?;
-                let bytes: Vec<u8> = hex::decode(txid_str).expect("should be valid hex");
-                let txid = Txid::consensus_decode(&mut bytes.as_slice()).expect("Valid txid");
+                let txid = Txid::from_str(&txid_str).expect("Valid txid");
                 Ok(txid)
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -239,7 +234,7 @@ impl Database {
     pub(crate) fn insert_mempool_tx(
         &self,
         tx: Transaction,
-        found_at: Option<SystemTime>,
+        found_at: Option<u64>,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
@@ -248,11 +243,7 @@ impl Database {
         let tx_str = hex::encode(tx_bytes);
 
         let tx_id = tx.compute_txid().to_string();
-        let found_at = found_at
-            .unwrap_or(SystemTime::UNIX_EPOCH)
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let found_at = found_at.unwrap_or(now!());
 
         for input in tx.input.iter() {
             let prev_txid = input.previous_output.txid;

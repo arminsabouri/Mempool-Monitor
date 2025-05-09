@@ -59,9 +59,7 @@ impl App {
             match bitcoind.get_raw_transaction_info(txid, None) {
                 Ok(tx_info) => match tx_info.transaction() {
                     Ok(tx) => {
-                        let found_at =
-                            SystemTime::UNIX_EPOCH + Duration::from_secs(pool_entrance_time);
-                        self.db.insert_mempool_tx(tx, Some(found_at))?;
+                        self.db.insert_mempool_tx(tx, Some(pool_entrance_time))?;
                     }
                     Err(e) => {
                         error!("Error getting transaction info: {}", e);
@@ -117,7 +115,7 @@ impl App {
                         info!("Shutting down mempool state task");
                         break;
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                    _ = tokio::time::sleep(Duration::from_secs(30)) => {
                         tasks_tx.send(Task::MempoolState).await?;
                     }
                 }
