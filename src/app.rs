@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use crate::{
     database::Database,
@@ -17,6 +17,9 @@ fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> 
     let bitcoind = Client::new(bitcoind_host, bitcoind_auth)?;
     Ok(bitcoind)
 }
+
+const MEMPOOL_STATE_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+const PRUNE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct App {
@@ -115,7 +118,7 @@ impl App {
                         info!("Shutting down mempool state task");
                         break;
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    _ = tokio::time::sleep(MEMPOOL_STATE_CHECK_INTERVAL) => {
                         tasks_tx.send(Task::MempoolState).await?;
                     }
                 }
@@ -131,7 +134,7 @@ impl App {
                         info!("Shutting down prune check task");
                         break;
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                    _ = tokio::time::sleep(PRUNE_CHECK_INTERVAL) => {
                         tasks_tx_2.send(Task::PruneCheck).await?;
                     }
                 }
