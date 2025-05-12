@@ -45,9 +45,9 @@ impl Database {
                 inputs_hash TEXT PRIMARY KEY,
                 tx_id TEXT NOT NULL,
                 tx_data TEXT NOT NULL,
-                found_at INTEGER NOT NULL,
-                mined_at INTEGER,
-                pruned_at INTEGER,
+                found_at DATETIME NOT NULL,
+                mined_at DATETIME,
+                pruned_at DATETIME,
                 parent_txid TEXT,
                 absolute_fee INTEGER NOT NULL,
                 fee_rate INTEGER NOT NULL,
@@ -65,7 +65,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS rbf (
                 inputs_hash TEXT PRIMARY KEY,
-                created_at INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
                 fee_total INTEGER NOT NULL,
                 version INTEGER NOT NULL
             )",
@@ -76,7 +76,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mempool (
                 tx_id TEXT PRIMARY KEY,
-                created_at INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
                 size INTEGER NOT NULL,
                 tx_count INTEGER NOT NULL,
                 block_height INTEGER NOT NULL,
@@ -90,7 +90,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS migrations (
                 id TEXT PRIMARY KEY,
-                applied_at INTEGER NOT NULL
+                applied_at DATETIME NOT NULL
             )",
             [],
         )?;
