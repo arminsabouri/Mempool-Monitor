@@ -3,7 +3,7 @@ use std::{str::FromStr, time::SystemTime, vec};
 use anyhow::Result;
 use bitcoin::{
     consensus::{Decodable, Encodable},
-    BlockHash, Transaction, Txid,
+    Amount, BlockHash, FeeRate, Transaction, Txid,
 };
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension};
@@ -49,6 +49,8 @@ impl Database {
                 mined_at INTEGER,
                 pruned_at INTEGER,
                 parent_txid TEXT,
+                absolute_fee INTEGER NOT NULL,
+                fee_rate INTEGER NOT NULL,
                 version INTEGER NOT NULL
             )",
             [],
@@ -235,6 +237,8 @@ impl Database {
         &self,
         tx: Transaction,
         found_at: Option<u64>,
+        absolute_fee: Amount,
+        fee_rate: FeeRate,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
@@ -265,13 +269,15 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_id, tx_data, found_at, version)
-            VALUES (?1, ?2, ?3, ?4, ?5)",
+            (inputs_hash, tx_id, tx_data, found_at, absolute_fee, fee_rate, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 inputs_hash,
                 tx_id,
                 tx_str,
                 found_at,
+                absolute_fee.to_sat(),
+                fee_rate.to_sat_per_vb_ceil(),
                 MEMPOOL_TRANSACTION_VERSION
             ],
         )?;

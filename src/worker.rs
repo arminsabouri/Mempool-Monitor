@@ -1,7 +1,7 @@
-use crate::database::Database;
+use crate::{database::Database, utils::compute_fee_rate};
 use anyhow::Result;
 use async_channel::Receiver;
-use bitcoin::{consensus::Decodable, Amount, Transaction};
+use bitcoin::{consensus::Decodable, Amount, FeeRate, Transaction};
 use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use log::{debug, error, info};
 
@@ -48,7 +48,28 @@ impl TaskContext {
         }
     }
 
+    /// Return absolute fee of a transaction
     fn get_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
+        let txid = tx.compute_txid();
+        let tx_info = self.bitcoind.get_raw_transaction_info(&txid, None)?;
+        let mut input_value = Amount::from_sat(0);
+        for vin in tx_info.vin {
+            if vin.is_coinbase() {
+                return Ok(Amount::ZERO);
+            }
+            let prev_txout = self
+                .bitcoind
+                .get_raw_transaction(&vin.txid.expect("is not coinbase "), None)?;
+            let prev_txout_value =
+                prev_txout.output[vin.vout.expect("is not coinbase") as usize].value;
+            input_value += prev_txout_value;
+        }
+        let output_value = tx_info.vout.iter().map(|vout| vout.value).sum();
+        let fee = input_value - output_value;
+        Ok(fee)
+    }
+
+    fn get_mempool_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
         let tx = self.bitcoind.get_mempool_entry(&tx.compute_txid())?;
         Ok(tx.fees.base)
     }
@@ -107,20 +128,27 @@ impl TaskContext {
                     };
                     let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
 
+                    let fee = match self.get_transaction_fee(&tx) {
+                        Ok(fee) => fee,
+                        Err(e) => {
+                            error!("Error getting transaction fee: {}", e);
+                            continue;
+                        }
+                    };
+                    debug!("Fee: {}", fee);
+                    let fee_rate = match compute_fee_rate(&tx, fee) {
+                        Ok(fee_rate) => fee_rate,
+                        Err(e) => {
+                            error!("Error computing fee rate: {}", e);
+                            continue;
+                        }
+                    };
                     if self.db.tx_exists(&tx)? {
                         if is_mined {
                             self.db.record_mined_tx(&tx)?;
                             info!("Transaction was mined: {:?}", txid);
                         } else {
                             info!("Transaction was RBF'd: {:?}", txid);
-                            let fee = match self.get_transaction_fee(&tx) {
-                                Ok(fee) => fee,
-                                Err(e) => {
-                                    error!("Error getting transaction fee: {}", e);
-                                    continue;
-                                }
-                            };
-                            debug!("Fee: {}", fee);
                             self.db.record_rbf(&tx, fee.to_sat())?;
                             self.db.update_txid_by_inputs_hash(&tx)?;
                         }
@@ -128,7 +156,7 @@ impl TaskContext {
                         continue;
                     }
 
-                    self.db.insert_mempool_tx(tx, None)?;
+                    self.db.insert_mempool_tx(tx, None, fee, fee_rate)?;
                     self.db.flush()?;
                     info!("Transaction inserted: {:?}", txid);
                 }
