@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::{
     database::Database,
+    utils::compute_fee_rate,
     worker::{Task, TaskContext},
     zmq_factory::BitcoinZmqFactory,
 };
@@ -62,7 +63,14 @@ impl App {
             match bitcoind.get_raw_transaction_info(txid, None) {
                 Ok(tx_info) => match tx_info.transaction() {
                     Ok(tx) => {
-                        self.db.insert_mempool_tx(tx, Some(pool_entrance_time))?;
+                        let absolute_fee = bitcoind.get_mempool_entry(txid)?.fees.base;
+                        let fee_rate = compute_fee_rate(&tx, absolute_fee)?;
+                        self.db.insert_mempool_tx(
+                            tx,
+                            Some(pool_entrance_time),
+                            absolute_fee,
+                            fee_rate,
+                        )?;
                     }
                     Err(e) => {
                         error!("Error getting transaction info: {}", e);
@@ -172,12 +180,12 @@ impl App {
         tokio::select! {
             _ = ctrl_c() => {
                 info!("Received shutdown signal");
-                shutdown_tx.send(())?;
+                shutdown_tx.send(()).map_err(|e| anyhow::anyhow!("Failed to send shutdown signal: {}", e))?;
             }
-            r = mempool_state_handle => r??,
-            r = prune_check_handle => r??,
-            r = zmq_handle => r??,
-        }
+            r = mempool_state_handle => r?.map_err(|e| anyhow::anyhow!("Mempool state task failed: {}", e))?,
+            r = prune_check_handle => r?.map_err(|e| anyhow::anyhow!("Prune check task failed: {}", e))?,
+            r = zmq_handle => r?.map_err(|e| anyhow::anyhow!("ZMQ task failed: {}", e))?,
+        };
 
         // Clean up
         info!("Shutting down workers...");
