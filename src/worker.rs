@@ -1,7 +1,7 @@
 use crate::{database::Database, utils::compute_fee_rate};
 use anyhow::Result;
 use async_channel::Receiver;
-use bitcoin::{consensus::Decodable, Amount, FeeRate, Transaction};
+use bitcoin::{consensus::Decodable, Amount, Transaction};
 use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use log::{debug, error, info};
 
@@ -69,11 +69,6 @@ impl TaskContext {
         Ok(fee)
     }
 
-    fn get_mempool_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
-        let tx = self.bitcoind.get_mempool_entry(&tx.compute_txid())?;
-        Ok(tx.fees.base)
-    }
-
     fn check_for_pruned_txs(&self) -> Result<()> {
         info!("Checking for pruned txs");
         let txids = self.bitcoind.get_raw_mempool()?;
@@ -114,7 +109,6 @@ impl TaskContext {
                         info!("Record coinbase tx");
                         // Record coinbase sperately
                         self.db.record_coinbase_tx(&tx)?;
-                        self.db.flush()?;
                         continue;
                     }
 
@@ -127,7 +121,6 @@ impl TaskContext {
                         }
                     };
                     let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
-
                     let fee = match self.get_transaction_fee(&tx) {
                         Ok(fee) => fee,
                         Err(e) => {
@@ -135,7 +128,6 @@ impl TaskContext {
                             continue;
                         }
                     };
-                    debug!("Fee: {}", fee);
                     let fee_rate = match compute_fee_rate(&tx, fee) {
                         Ok(fee_rate) => fee_rate,
                         Err(e) => {

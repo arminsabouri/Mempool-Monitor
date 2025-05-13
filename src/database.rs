@@ -137,14 +137,16 @@ impl Database {
         let tx_str = hex::encode(tx_bytes);
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_data, tx_id, found_at, mined_at, version)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (inputs_hash, tx_data, tx_id, found_at, mined_at, absolute_fee, fee_rate, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 tx_id,
                 tx_str,
                 tx_id,
                 found_at,
                 mined_at,
+                Amount::ZERO.to_sat(),
+                FeeRate::ZERO.to_sat_per_vb_ceil(),
                 COINBASE_TRANSACTION_VERSION
             ],
         )?;
