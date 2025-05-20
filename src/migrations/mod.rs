@@ -30,6 +30,28 @@ impl Migration for UpdateChildTxidColName {
     }
 }
 
+pub(crate) struct AddTxNotSeenInMempool;
+
+impl Migration for AddTxNotSeenInMempool {
+    fn id(&self) -> &'static str {
+        "add_tx_not_seen_in_mempool"
+    }
+
+    fn migrate(&self, conn: &rusqlite::Connection) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN seen_in_mempool BOOLEAN NOT NULL DEFAULT TRUE",
+            [],
+        )?;
+
+        let applied_at = now!().to_string();
+        conn.execute(
+            "INSERT INTO migrations (id, applied_at) VALUES (?1, ?2)",
+            [self.id(), &applied_at],
+        )?;
+        Ok(())
+    }
+}
+
 fn already_applied(conn: &rusqlite::Connection, migration: &str) -> Result<bool> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM migrations WHERE id = ?")?;
     let count: i32 = stmt.query_row([migration], |row| row.get(0))?;
@@ -37,7 +59,10 @@ fn already_applied(conn: &rusqlite::Connection, migration: &str) -> Result<bool>
 }
 
 pub(crate) fn run_migrations(conn: &rusqlite::Connection) -> Result<()> {
-    let migrations = vec![UpdateChildTxidColName];
+    let migrations: Vec<Box<dyn Migration>> = vec![
+        Box::new(UpdateChildTxidColName),
+        Box::new(AddTxNotSeenInMempool),
+    ];
     for migration in migrations {
         if already_applied(conn, migration.id())? {
             continue;
