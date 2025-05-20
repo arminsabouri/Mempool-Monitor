@@ -163,9 +163,18 @@ impl Database {
         let tx_str = hex::encode(tx_bytes);
         let conn = self.0.get()?;
         let mined_at = now!();
+
+        let tx_in_mempool: bool = conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE inputs_hash = ?1",
+            params![inputs_hash],
+            |row| row.get(0),
+        )?;
+        if !tx_in_mempool {
+            info!("Received tx that was not in my mempool: {}", inputs_hash);
+        }
         conn.execute(
-            "UPDATE transactions SET mined_at = ?1, tx_data = ?2 WHERE inputs_hash = ?3",
-            params![mined_at, tx_str, inputs_hash],
+            "UPDATE transactions SET mined_at = ?1, tx_data = ?2, seen_in_mempool = ?3 WHERE inputs_hash = ?4",
+            params![mined_at, tx_str, true, inputs_hash],
         )?;
 
         Ok(())
