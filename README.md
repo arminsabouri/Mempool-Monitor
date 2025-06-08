@@ -30,8 +30,8 @@ docker run --rm -it -v "$PWD":/volume -w /volume messense/rust-musl-cross:x86_64
 - [ ] add tests
 - [ ] Do not start if node is not synced
 - [ ] DB operations should be async
-- [ ] Should not start if mempool is not loadeds
-- [X] Replace sled with something that allows you to query via various indecies
+- [ ] Should not start if mempool is not loaded
+- [ ] Replace sled with something that allows you to query via various indecies
 - [X] multi-threading
 - [X] add record CPFP
 - [X] Track prune
