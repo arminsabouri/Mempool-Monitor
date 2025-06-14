@@ -3,22 +3,19 @@ use std::time::Duration;
 use crate::{
     database::Database,
     utils::compute_fee_rate,
-    worker::{Task, TaskContext},
+    worker::{get_absolute_fee, Task, TaskContext},
     zmq_factory::BitcoinZmqFactory,
 };
 
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+// use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoind_async_client::{traits::Reader, Client};
 use futures_util::StreamExt;
 use log::{error, info};
 use tokio::signal::ctrl_c;
 
-fn connect_bitcoind(bitcoind_host: &str, bitcoind_auth: Auth) -> Result<Client> {
-    let bitcoind = Client::new(bitcoind_host, bitcoind_auth)?;
-    Ok(bitcoind)
-}
-
+// TODO these should be configurable
 const MEMPOOL_STATE_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 const PRUNE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -28,23 +25,20 @@ pub struct App {
     db: Database,
     tasks_tx: Sender<Task>,
     tasks_rx: Receiver<Task>,
-    bitcoind_url: String,
-    bitcoind_auth: Auth,
+    rpc_client: Client,
     num_workers: usize,
 }
 
 impl App {
     pub fn new(
-        bitcoind_url: String,
-        bitcoind_auth: Auth,
+        rpc_client: Client,
         zmq_factory: BitcoinZmqFactory,
         db: Database,
         num_workers: usize,
     ) -> Self {
         let (sender, receiver) = bounded(100_000);
         Self {
-            bitcoind_url,
-            bitcoind_auth,
+            rpc_client,
             zmq_factory,
             db,
             tasks_tx: sender,
@@ -53,29 +47,29 @@ impl App {
         }
     }
 
-    fn extract_existing_mempool(&self) -> Result<()> {
-        let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
-        let mempool = bitcoind.get_raw_mempool_verbose()?;
+    async fn extract_existing_mempool(&self) -> Result<()> {
+        // let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
+        let mempool = self.rpc_client.get_raw_mempool_verbose().await?;
         info!("Found {} transactions in mempool", mempool.len());
 
         for (txid, mempool_tx) in mempool.iter() {
             let pool_entrance_time = mempool_tx.time;
-            match bitcoind.get_raw_transaction_info(txid, None) {
-                Ok(tx_info) => match tx_info.transaction() {
-                    Ok(tx) => {
-                        let absolute_fee = bitcoind.get_mempool_entry(txid)?.fees.base;
-                        let fee_rate = compute_fee_rate(&tx, absolute_fee)?;
-                        self.db.insert_mempool_tx(
-                            tx,
-                            Some(pool_entrance_time),
-                            absolute_fee,
-                            fee_rate,
-                        )?;
-                    }
-                    Err(e) => {
-                        error!("Error getting transaction info: {}", e);
-                    }
-                },
+            match self
+                .rpc_client
+                .get_raw_transaction_verbosity_zero(txid)
+                .await
+            {
+                Ok(tx_info) => {
+                    let tx = tx_info.transaction()?;
+                    let absolute_fee = get_absolute_fee(&tx, &self.rpc_client).await?;
+                    let fee_rate = compute_fee_rate(&tx, absolute_fee)?;
+                    self.db.insert_mempool_tx(
+                        tx,
+                        Some(pool_entrance_time),
+                        absolute_fee,
+                        fee_rate,
+                    )?;
+                }
                 Err(e) => {
                     error!("Error getting transaction info: {}", e);
                 }
@@ -85,7 +79,7 @@ impl App {
         Ok(())
     }
 
-    pub fn init(&mut self) -> Result<()> {
+    pub async fn init(&mut self) -> Result<()> {
         info!("Initializing mempool tracker");
         // Run migrations
         info!("Running migrations");
@@ -95,11 +89,11 @@ impl App {
         self.db.remove_stale_txs()?;
         // Extract existing mempool
         info!("Extracting existing mempool");
-        self.extract_existing_mempool()?;
+        self.extract_existing_mempool().await?;
         // Start workers
         let mut task_handles = vec![];
         for _ in 0..self.num_workers {
-            let bitcoind = connect_bitcoind(&self.bitcoind_url, self.bitcoind_auth.clone())?;
+            let bitcoind = self.rpc_client.clone();
             let mut task_context =
                 TaskContext::new(bitcoind, self.db.clone(), self.tasks_rx.clone());
             task_handles.push(tokio::spawn(async move { task_context.run().await }));

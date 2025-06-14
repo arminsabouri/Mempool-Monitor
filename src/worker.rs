@@ -2,13 +2,13 @@ use crate::{database::Database, utils::compute_fee_rate};
 use anyhow::Result;
 use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
-use bitcoind::bitcoincore_rpc::{Client, RpcApi};
+use bitcoind_async_client::{traits::Reader, Client};
 use log::{debug, error, info};
 
 // Macro to execute a function, if its error, log it and continue
 macro_rules! log_error {
     ($fn:expr, $arg:expr) => {
-        if let Err(e) = $fn($arg) {
+        if let Err(e) = $fn($arg).await {
             error!("Error: {}", e);
             continue;
         }
@@ -39,6 +39,32 @@ pub struct TaskContext {
     tasks: Receiver<Task>,
 }
 
+/// Return absolute fee of a transaction
+pub async fn get_absolute_fee(tx: &Transaction, rpc_client: &Client) -> Result<Amount> {
+    if tx.is_coinbase() {
+        return Ok(Amount::ZERO);
+    }
+    info!("Getting absolute fee for tx: {:?}", tx.compute_txid());
+
+    let mut input_value = Amount::from_sat(0);
+    for vin in tx.input.iter() {
+        if vin.previous_output.is_null() {
+            continue;
+        }
+        info!("outpoint: {:?}", vin.previous_output);
+        let prev_tx = rpc_client
+            .get_raw_transaction_verbosity_zero(&vin.previous_output.txid)
+            .await?
+            .transaction()?;
+        let prev_txout = prev_tx.output[vin.previous_output.vout as usize].clone();
+        let prev_txout_value = prev_txout.value;
+        input_value += prev_txout_value;
+    }
+    let output_value = tx.output.iter().map(|vout| vout.value).sum();
+    let fee = input_value - output_value;
+    Ok(fee)
+}
+
 impl TaskContext {
     pub fn new(bitcoind: Client, db: Database, tasks: Receiver<Task>) -> Self {
         Self {
@@ -48,30 +74,9 @@ impl TaskContext {
         }
     }
 
-    /// Return absolute fee of a transaction
-    fn get_transaction_fee(&self, tx: &Transaction) -> Result<Amount> {
-        let txid = tx.compute_txid();
-        let tx_info = self.bitcoind.get_raw_transaction_info(&txid, None)?;
-        let mut input_value = Amount::from_sat(0);
-        for vin in tx_info.vin {
-            if vin.is_coinbase() {
-                return Ok(Amount::ZERO);
-            }
-            let prev_txout = self
-                .bitcoind
-                .get_raw_transaction(&vin.txid.expect("is not coinbase "), None)?;
-            let prev_txout_value =
-                prev_txout.output[vin.vout.expect("is not coinbase") as usize].value;
-            input_value += prev_txout_value;
-        }
-        let output_value = tx_info.vout.iter().map(|vout| vout.value).sum();
-        let fee = input_value - output_value;
-        Ok(fee)
-    }
-
-    fn check_for_pruned_txs(&self) -> Result<()> {
+    async fn check_for_pruned_txs(&self) -> Result<()> {
         info!("Checking for pruned txs");
-        let txids = self.bitcoind.get_raw_mempool()?;
+        let txids = self.bitcoind.get_raw_mempool().await?;
         let pruned_txids = self.db.txids_of_txs_not_in_list(txids)?;
         info!("Found {} pruned txs", pruned_txids.len());
         self.db.record_pruned_txs(pruned_txids)?;
@@ -84,9 +89,9 @@ impl TaskContext {
             match task {
                 Task::MempoolState => {
                     info!("Mempool state task received");
-                    let mempool_info = self.bitcoind.get_mempool_info()?;
-                    let block_height = self.bitcoind.get_block_count()?;
-                    let block_hash = self.bitcoind.get_block_hash(block_height)?;
+                    let mempool_info = self.bitcoind.get_mempool_info().await?;
+                    let block_height = self.bitcoind.get_block_count().await?;
+                    let block_hash = self.bitcoind.get_block_hash(block_height).await?;
                     if let Err(e) = self.db.record_mempool_state(
                         mempool_info.bytes as u64,
                         mempool_info.size as u64,
@@ -113,7 +118,8 @@ impl TaskContext {
                     }
 
                     let txid = tx.compute_txid();
-                    let tx_info = match self.bitcoind.get_raw_transaction_info(&txid, None) {
+                    let tx_info = match self.bitcoind.get_raw_transaction_verbosity_one(&txid).await
+                    {
                         Ok(tx_info) => tx_info,
                         Err(e) => {
                             error!("Error getting transaction info: {}", e);
@@ -121,7 +127,7 @@ impl TaskContext {
                         }
                     };
                     let is_mined = tx_info.confirmations.unwrap_or(0) > 0;
-                    let fee = match self.get_transaction_fee(&tx) {
+                    let fee = match get_absolute_fee(&tx, &self.bitcoind).await {
                         Ok(fee) => fee,
                         Err(e) => {
                             error!("Error getting transaction fee: {}", e);

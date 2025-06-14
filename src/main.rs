@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoind::bitcoincore_rpc::Auth;
+use bitcoind_async_client::Client;
 use clap::Parser;
 use zmq_factory::BitcoinZmqFactory;
 
@@ -36,17 +36,18 @@ async fn main() -> Result<()> {
     let zmq_factory =
         BitcoinZmqFactory::new(args.bitcoind_host.clone(), args.bitcoind_zmq_port.clone());
     let db = database::Database::new("mempool-tracker.db")?;
-    let auth = Auth::UserPass(args.bitcoind_user, args.bitcoind_password);
     let bitcoind_url = format!("http://{}:{}", args.bitcoind_host, args.bitcoind_rpc_port);
-    let mut app = app::App::new(
-        bitcoind_url,
-        auth,
-        zmq_factory,
-        db,
-        args.num_workers as usize,
-    );
 
-    app.init()?;
+    let rpc_client = Client::new(
+        bitcoind_url,
+        args.bitcoind_user,
+        args.bitcoind_password,
+        None,
+        None,
+    )?;
+    let mut app = app::App::new(rpc_client, zmq_factory, db, args.num_workers as usize);
+
+    app.init().await?;
     app.run().await?;
 
     Ok(())
