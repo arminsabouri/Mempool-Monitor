@@ -9,15 +9,10 @@ use crate::{
 
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
-// use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use bitcoind_async_client::{traits::Reader, Client};
 use futures_util::StreamExt;
 use log::{error, info};
 use tokio::signal::ctrl_c;
-
-// TODO these should be configurable
-const MEMPOOL_STATE_CHECK_INTERVAL: Duration = Duration::from_secs(15);
-const PRUNE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct App {
@@ -35,6 +30,8 @@ impl App {
         zmq_factory: BitcoinZmqFactory,
         db: Database,
         num_workers: usize,
+        mempool_state_check_interval: Duration,
+        prune_check_interval: Duration,
     ) -> Self {
         let (sender, receiver) = bounded(100_000);
         Self {
@@ -120,7 +117,7 @@ impl App {
                         info!("Shutting down mempool state task");
                         break;
                     }
-                    _ = tokio::time::sleep(MEMPOOL_STATE_CHECK_INTERVAL) => {
+                    _ = tokio::time::sleep(self.mempool_state_check_interval) => {
                         tasks_tx.send(Task::MempoolState).await?;
                     }
                 }
@@ -136,7 +133,7 @@ impl App {
                         info!("Shutting down prune check task");
                         break;
                     }
-                    _ = tokio::time::sleep(PRUNE_CHECK_INTERVAL) => {
+                    _ = tokio::time::sleep(self.prune_check_interval) => {
                         tasks_tx_2.send(Task::PruneCheck).await?;
                     }
                 }
