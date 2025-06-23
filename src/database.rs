@@ -29,6 +29,7 @@ macro_rules! now {
 const MEMPOOL_TRANSACTION_VERSION: u32 = 1;
 const RBF_TRANSACTION_VERSION: u32 = 0;
 const COINBASE_TRANSACTION_VERSION: u32 = 0;
+const MEMPOOL_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
 pub struct Database(r2d2::Pool<SqliteConnectionManager>);
@@ -117,7 +118,7 @@ impl Database {
         let block_hash_str = hex::encode(writer);
         conn.execute(
             "INSERT OR REPLACE INTO mempool (created_at, size, tx_count, block_height, block_hash, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![now, mempool_size, mempool_tx_count, block_height, block_hash_str, MEMPOOL_TRANSACTION_VERSION],
+            params![now, mempool_size, mempool_tx_count, block_height, block_hash_str, MEMPOOL_STATE_VERSION],
         )?;
         Ok(())
     }
