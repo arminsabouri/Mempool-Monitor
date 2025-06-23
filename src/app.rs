@@ -22,6 +22,8 @@ pub struct App {
     tasks_rx: Receiver<Task>,
     rpc_client: Client,
     num_workers: usize,
+    mempool_state_check_interval: Duration,
+    prune_check_interval: Duration,
 }
 
 impl App {
@@ -41,6 +43,8 @@ impl App {
             tasks_tx: sender,
             tasks_rx: receiver,
             num_workers,
+            mempool_state_check_interval,
+            prune_check_interval,
         }
     }
 
@@ -109,6 +113,9 @@ impl App {
         let shutdown_rx_2 = shutdown_tx.subscribe();
         let shutdown_rx_3 = shutdown_tx.subscribe();
 
+        let mempool_state_check_interval = self.mempool_state_check_interval.clone();
+        let prune_check_interval = self.prune_check_interval.clone();
+
         let mempool_state_handle = tokio::spawn(async move {
             let mut shutdown = shutdown_rx_1;
             loop {
@@ -117,7 +124,7 @@ impl App {
                         info!("Shutting down mempool state task");
                         break;
                     }
-                    _ = tokio::time::sleep(self.mempool_state_check_interval) => {
+                    _ = tokio::time::sleep(mempool_state_check_interval) => {
                         tasks_tx.send(Task::MempoolState).await?;
                     }
                 }
@@ -133,7 +140,7 @@ impl App {
                         info!("Shutting down prune check task");
                         break;
                     }
-                    _ = tokio::time::sleep(self.prune_check_interval) => {
+                    _ = tokio::time::sleep(prune_check_interval) => {
                         tasks_tx_2.send(Task::PruneCheck).await?;
                     }
                 }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use bitcoind_async_client::Client;
 use clap::Parser;

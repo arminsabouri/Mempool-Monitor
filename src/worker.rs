@@ -44,14 +44,12 @@ pub async fn get_absolute_fee(tx: &Transaction, rpc_client: &Client) -> Result<A
     if tx.is_coinbase() {
         return Ok(Amount::ZERO);
     }
-    info!("Getting absolute fee for tx: {:?}", tx.compute_txid());
-
     let mut input_value = Amount::from_sat(0);
     for vin in tx.input.iter() {
         if vin.previous_output.is_null() {
             continue;
         }
-        info!("outpoint: {:?}", vin.previous_output);
+        debug!("Getting input tx: {:?}", vin.previous_output.txid);
         let prev_tx = rpc_client
             .get_raw_transaction_verbosity_zero(&vin.previous_output.txid)
             .await?
