@@ -86,7 +86,9 @@ impl App {
 
         if blockchain_info.initial_block_download {
             error!("Blockchain is still in initial block download");
-            return Err(anyhow::anyhow!("Blockchain is still in initial block download"));
+            return Err(anyhow::anyhow!(
+                "Blockchain is still in initial block download"
+            ));
         }
 
         let mempool_info = self.rpc_client.get_mempool_info().await?;

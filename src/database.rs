@@ -183,19 +183,12 @@ impl Database {
 
     pub(crate) fn txids_of_txs_not_in_list(&self, txids: Vec<Txid>) -> Result<Vec<Txid>> {
         let conn = self.0.get()?;
-        if txids.is_empty() {
-            let mut stmt = conn.prepare(
-                "SELECT tx_id FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL",
-            )?;
-            return Ok(stmt
-                .query_map([], |row| {
-                    let txid_str: String = row.get(0)?;
-                    let bytes: Vec<u8> = hex::decode(txid_str).expect("should be valid hex");
-                    let txid = Txid::consensus_decode(&mut bytes.as_slice()).expect("Valid txid");
 
-                    Ok(txid)
-                })?
-                .collect::<Result<Vec<_>, _>>()?);
+        // If mempool is empty, don't mark anything as pruned
+        // This could be a temporary state or network issue
+        // We dont want to mark all txs as pruned
+        if txids.is_empty() {
+            return Ok(vec![]);
         }
 
         let txid_list = txids
