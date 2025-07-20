@@ -145,10 +145,10 @@ impl TaskContext {
                             info!("Transaction was mined: {:?}", txid);
                         } else {
                             info!("Transaction was RBF'd: {:?}", txid);
-                            self.db.record_rbf(&tx, fee.to_sat())?;
+                            self.db.record_rbf(&tx, fee.to_sat(), fee_rate)?;
                             self.db.update_txid_by_inputs_hash(&tx)?;
                         }
-                        self.db.flush()?;
+                        // self.db.flush()?;
                         continue;
                     }
 

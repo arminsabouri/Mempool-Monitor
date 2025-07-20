@@ -27,7 +27,7 @@ macro_rules! now {
 /// Versioning the database, scheme should be backwards compatible
 /// But may not always be forwards compatible
 const MEMPOOL_TRANSACTION_VERSION: u32 = 1;
-const RBF_TRANSACTION_VERSION: u32 = 0;
+const RBF_TRANSACTION_VERSION: u32 = 1;
 const COINBASE_TRANSACTION_VERSION: u32 = 0;
 const MEMPOOL_STATE_VERSION: u32 = 1;
 
@@ -175,6 +175,7 @@ impl Database {
         }
         conn.execute(
             "UPDATE transactions SET mined_at = ?1, tx_data = ?2, seen_in_mempool = ?3 WHERE inputs_hash = ?4",
+            // TOOD: why was this set to true?
             params![mined_at, tx_str, true, inputs_hash],
         )?;
 
@@ -303,19 +304,26 @@ impl Database {
         Ok(count > 0)
     }
 
-    pub(crate) fn record_rbf(&self, transaction: &Transaction, fee_total: u64) -> Result<()> {
+    pub(crate) fn record_rbf(
+        &self,
+        tx: &Transaction,
+        fee_total: u64,
+        fee_rate: FeeRate,
+    ) -> Result<()> {
         let conn = self.0.get()?;
-        let inputs_hash = get_inputs_hash(transaction.clone().input)?;
-        let created_at = now!();
+        let inputs_hash = get_inputs_hash(tx.clone().input)?;
 
         // If input_hash is not in the database, ignore this
-        if !self.tx_exists(transaction)? {
+        if !self.tx_exists(tx)? {
+            info!("Replaced Tx not found in database, ignoring RBF");
             return Ok(());
         }
 
+        // Insert new tx into rbf table
+        let txid = tx.compute_txid().to_string();
         conn.execute(
-            "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total, version) VALUES (?1, ?2, ?3, ?4)",
-            params![inputs_hash, created_at, fee_total, RBF_TRANSACTION_VERSION],
+            "INSERT OR REPLACE INTO rbf (inputs_hash, created_at, fee_total, replaces, version) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![inputs_hash, now!(), fee_total, txid, RBF_TRANSACTION_VERSION],
         )?;
 
         Ok(())
