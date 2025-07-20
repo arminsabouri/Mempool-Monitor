@@ -139,16 +139,17 @@ impl TaskContext {
                             continue;
                         }
                     };
+
+                    if is_mined {
+                        self.db.record_mined_tx(&tx)?;
+                        info!("Transaction was mined: {:?}", txid);
+                        continue;
+                    }
+
                     if self.db.tx_exists(&tx)? {
-                        if is_mined {
-                            self.db.record_mined_tx(&tx)?;
-                            info!("Transaction was mined: {:?}", txid);
-                        } else {
-                            info!("Transaction was RBF'd: {:?}", txid);
-                            self.db.record_rbf(&tx, fee.to_sat(), fee_rate)?;
-                            self.db.update_txid_by_inputs_hash(&tx)?;
-                        }
-                        // self.db.flush()?;
+                        info!("Transaction was RBF'd: {:?}", txid);
+                        self.db.record_rbf(&tx, fee.to_sat(), fee_rate)?;
+                        self.db.update_txid_by_inputs_hash(&tx)?;
                         continue;
                     }
 
