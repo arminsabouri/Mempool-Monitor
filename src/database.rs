@@ -177,9 +177,20 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn txids_of_txs_not_in_list(&self, txids: Vec<Txid>) -> Result<Vec<Txid>> {
+    pub(crate) fn txids_in_mempool(&self) -> Result<Vec<Txid>> {
         let conn = self.0.get()?;
+        let query = "SELECT tx_id FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL";
+        let mut stmt = conn.prepare(&query)?;
+        let txids = stmt.query_map([], |row| {
+            let txid_str: String = row.get(0)?;
+            let txid = Txid::from_str(&txid_str).expect("Valid txid");
+            Ok(txid)
+        })?;
+        Ok(txids.collect::<Result<Vec<_>, _>>()?)
+    }
 
+    pub(crate) fn txids_of_txs_not_in_list(&self, txids: Vec<Txid>) -> Result<Vec<Txid>> {
+        let mempool_txids = self.txids_in_mempool()?;
         // If mempool is empty, don't mark anything as pruned
         // This could be a temporary state or network issue
         // We dont want to mark all txs as pruned
@@ -187,27 +198,13 @@ impl Database {
             return Ok(vec![]);
         }
 
-        let txid_list = txids
+        let txids_not_in_current_mempool = mempool_txids
             .iter()
-            .map(|txid| format!("'{}'", txid.to_string()))
-            .collect::<Vec<String>>()
-            .join(",");
+            .filter(|txid| !txids.contains(txid))
+            .map(|txid| txid.clone())
+            .collect::<Vec<_>>();
 
-        let query = format!(
-            "SELECT tx_id FROM transactions WHERE tx_id NOT IN ({}) AND pruned_at IS NULL AND mined_at IS NULL",
-            txid_list
-        );
-
-        let mut stmt = conn.prepare(&query)?;
-        let txids = stmt
-            .query_map([], |row| {
-                let txid_str: String = row.get(0)?;
-                let txid = Txid::from_str(&txid_str).expect("Valid txid");
-                Ok(txid)
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(txids)
+        Ok(txids_not_in_current_mempool)
     }
 
     pub(crate) fn record_pruned_txs(&self, txids: Vec<Txid>) -> Result<()> {
