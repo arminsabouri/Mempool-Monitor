@@ -40,6 +40,8 @@ impl Database {
         let pool = r2d2::Pool::new(manager)?;
         let conn = pool.get()?;
 
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
+
         // Create tables if they don't exist
         conn.execute(
             "CREATE TABLE IF NOT EXISTS transactions (
