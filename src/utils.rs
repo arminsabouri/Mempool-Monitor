@@ -1,6 +1,8 @@
 use anyhow::Result;
 use bitcoin::{consensus::Encodable, Amount, FeeRate, Transaction, TxIn};
 use bitcoin_hashes::Sha256;
+use reqwest::Client as ReqwestClient;
+use serde_json::Value;
 
 // Prune tx witness in place
 pub fn prune_large_witnesses(tx: &mut Transaction) {
@@ -32,4 +34,17 @@ pub fn compute_fee_rate(tx: &Transaction, absolute_fee: Amount) -> Result<FeeRat
     let fee_rate = FeeRate::from_sat_per_vb(absolute_fee.to_sat() / weight.to_vbytes_ceil())
         .ok_or(anyhow::anyhow!("Fee rate is 0"))?;
     Ok(fee_rate)
+}
+
+pub async fn get_hash_rate_distribution() -> Result<String> {
+    let reqwest_client = ReqwestClient::new();
+    let response = reqwest_client
+        .get("https://mempool.space/api/v1/mining/hashrate/pools/1m")
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    let json: Value = serde_json::from_str(&response)?;
+    Ok(json.to_string())
 }

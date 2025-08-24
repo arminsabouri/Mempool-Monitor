@@ -24,6 +24,7 @@ pub struct App {
     num_workers: usize,
     mempool_state_check_interval: Duration,
     prune_check_interval: Duration,
+    mining_info_interval: Option<Duration>,
 }
 
 impl App {
@@ -34,6 +35,7 @@ impl App {
         num_workers: usize,
         mempool_state_check_interval: Duration,
         prune_check_interval: Duration,
+        mining_info_interval: Option<Duration>,
     ) -> Self {
         let (sender, receiver) = bounded(100_000);
         Self {
@@ -45,6 +47,7 @@ impl App {
             num_workers,
             mempool_state_check_interval,
             prune_check_interval,
+            mining_info_interval,
         }
     }
 
@@ -192,8 +195,36 @@ impl App {
             })
         };
 
-        // Wait for ctrl-c
+        // Conditionally start mining info task
+        let mining_info_handle = if let Some(mining_info_interval) = self.mining_info_interval {
+            info!(
+                "Mining info tracking enabled with interval: {:?}",
+                mining_info_interval
+            );
+            let tasks_tx_4 = self.tasks_tx.clone();
+            let shutdown_rx_4 = shutdown_tx.subscribe();
+            Some(tokio::spawn(async move {
+                let mut shutdown = shutdown_rx_4;
+                loop {
+                    tokio::select! {
+                        _ = shutdown.recv() => {
+                            info!("Shutting down mining info task");
+                            break;
+                        }
+                        _ = tokio::time::sleep(mining_info_interval) => {
+                            tasks_tx_4.send(Task::MiningInfo).await?;
+                        }
+                    }
+                }
+                Ok::<(), anyhow::Error>(())
+            }))
+        } else {
+            info!("Mining info tracking disabled");
+            None
+        };
+
         tokio::select! {
+            // Wait for ctrl-c
             _ = ctrl_c() => {
                 info!("Received shutdown signal");
                 shutdown_tx.send(()).map_err(|e| anyhow::anyhow!("Failed to send shutdown signal: {}", e))?;
@@ -202,6 +233,13 @@ impl App {
             r = prune_check_handle => r?.map_err(|e| anyhow::anyhow!("Prune check task failed: {}", e))?,
             r = zmq_handle => r?.map_err(|e| anyhow::anyhow!("ZMQ task failed: {}", e))?,
         };
+
+        // If mining info task is running, wait for it to complete
+        if let Some(handle) = mining_info_handle {
+            handle
+                .await?
+                .map_err(|e| anyhow::anyhow!("Mining info task failed: {}", e))?;
+        }
 
         // Clean up
         info!("Shutting down workers...");

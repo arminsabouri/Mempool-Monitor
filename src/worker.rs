@@ -1,4 +1,7 @@
-use crate::{database::Database, utils::compute_fee_rate};
+use crate::{
+    database::Database,
+    utils::{compute_fee_rate, get_hash_rate_distribution},
+};
 use anyhow::Result;
 use async_channel::Receiver;
 use bitcoin::{consensus::Decodable, Amount, Transaction};
@@ -31,6 +34,7 @@ pub enum Task {
     RawTx(Vec<u8>),
     PruneCheck,
     MempoolState,
+    MiningInfo,
 }
 
 pub struct TaskContext {
@@ -85,6 +89,13 @@ impl TaskContext {
     pub async fn run(&mut self) -> Result<()> {
         while let Ok(task) = self.tasks.recv().await {
             match task {
+                Task::MiningInfo => {
+                    info!("Mining info task received");
+                    let hash_rate_distribution = get_hash_rate_distribution().await?;
+                    info!("Hash rate distribution: {}", hash_rate_distribution);
+                    self.db.record_mining_info(hash_rate_distribution)?;
+                    self.db.flush()?;
+                }
                 Task::MempoolState => {
                     info!("Mempool state task received");
                     let mempool_info = self.bitcoind.get_mempool_info().await?;

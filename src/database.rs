@@ -97,6 +97,14 @@ impl Database {
             )",
             [],
         )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mining_info (
+                created_at DATETIME NOT NULL,
+                hash_rate_distribution TEXT NOT NULL
+            )",
+            [],
+        )?;
         Ok(Self(pool))
     }
 
@@ -330,6 +338,16 @@ impl Database {
         conn.execute(
             "UPDATE transactions SET tx_id = ?1 WHERE inputs_hash = ?2",
             params![tx_id, inputs_hash],
+        )?;
+
+        Ok(())
+    }
+
+    pub(crate) fn record_mining_info(&self, hash_rate_distribution: String) -> Result<()> {
+        let conn = self.0.get()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO mining_info (created_at, hash_rate_distribution) VALUES (?1, ?2)",
+            params![now!(), hash_rate_distribution],
         )?;
 
         Ok(())

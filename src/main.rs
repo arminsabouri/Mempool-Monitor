@@ -31,6 +31,10 @@ struct Args {
     mempool_state_check_interval: u64,
     #[clap(long, default_value_t = 120)]
     prune_check_interval: u64,
+    #[clap(long, default_value_t = 60 * 60)]
+    track_mining_interval: u64,
+    #[clap(long, default_value_t = false)]
+    enable_mining_info: bool,
 }
 
 #[tokio::main]
@@ -48,6 +52,7 @@ async fn main() -> Result<()> {
     // TODO: add some validation
     let mempool_state_check_interval = Duration::from_secs(args.mempool_state_check_interval);
     let prune_check_interval = Duration::from_secs(args.prune_check_interval);
+    let track_mining_interval = Duration::from_secs(args.track_mining_interval);
 
     let rpc_client = Client::new(
         bitcoind_url,
@@ -63,6 +68,7 @@ async fn main() -> Result<()> {
         args.num_workers as usize,
         mempool_state_check_interval,
         prune_check_interval,
+        args.enable_mining_info.then(|| track_mining_interval),
     );
     app.init().await?;
     app.run().await?;
