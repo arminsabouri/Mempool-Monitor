@@ -331,7 +331,7 @@ dependencies = [
 [[package]]
 name = "bitcoind-async-client"
 version = "0.5.0"
-source = "git+https://github.com/alpenlabs/bitcoind-async-client?rev=3b20be9b#3b20be9bee6c48bb964e1e6464e08a984a2e836b"
+source = "git+https://github.com/arminsabouri/bitcoind-async-client?branch=cookie-auth#c49d883285c3085f6d1fe36d41e554d1c0f2b752"
 dependencies = [
  "base64 0.22.1",
  "bitcoin",

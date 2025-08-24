@@ -7,7 +7,7 @@ edition = "2021"
 bitcoin = "0.32.6"
 bitcoincore-zmq = { version = "1.5.2", features = ["async"] }
 bitcoind = "0.36.1"
-bitcoind-async-client = {git = "https://github.com/alpenlabs/bitcoind-async-client", rev = "3b20be9b"} 
+bitcoind-async-client = {git = "https://github.com/arminsabouri/bitcoind-async-client", branch = "cookie-auth"} 
 log = "0.4.26"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1.0.96"

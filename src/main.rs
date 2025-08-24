@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use bitcoind_async_client::Client;
+use bitcoind_async_client::{Auth, Client};
 use clap::Parser;
 use zmq_factory::BitcoinZmqFactory;
 
@@ -16,9 +16,11 @@ mod zmq_factory;
 #[derive(Clone, Debug, Parser)]
 struct Args {
     #[clap(long)]
-    bitcoind_user: String,
+    bitcoind_user: Option<String>,
     #[clap(long)]
-    bitcoind_password: String,
+    bitcoind_password: Option<String>,
+    #[clap(long)]
+    bitcoind_cookie_file: Option<PathBuf>,
     #[clap(long)]
     bitcoind_host: String,
     #[clap(long)]
@@ -54,13 +56,15 @@ async fn main() -> Result<()> {
     let prune_check_interval = Duration::from_secs(args.prune_check_interval);
     let track_mining_interval = Duration::from_secs(args.track_mining_interval);
 
-    let rpc_client = Client::new(
-        bitcoind_url,
-        args.bitcoind_user,
-        args.bitcoind_password,
-        None,
-        None,
-    )?;
+    let auth = if let Some(cookie_file) = args.bitcoind_cookie_file {
+        Auth::CookieFile(cookie_file)
+    } else if let (Some(user), Some(password)) = (args.bitcoind_user, args.bitcoind_password) {
+        Auth::UserPass(user, password)
+    } else {
+        return Err(anyhow::anyhow!("no auth method provided"));
+    };
+
+    let rpc_client = Client::new(bitcoind_url, auth, None, None)?;
     let mut app = app::App::new(
         rpc_client,
         zmq_factory,
