@@ -60,7 +60,7 @@ impl Migration for AddReplacementTxid {
     }
 
     fn migrate(&self, conn: &rusqlite::Connection) -> Result<()> {
-        conn.execute("ALTER TABLE rbf ADD COLUMN replaces TEXT NOT NULL", [])?;
+        conn.execute("ALTER TABLE rbf ADD COLUMN replaces TEXT", [])?;
 
         let applied_at = now!().to_string();
         conn.execute(
