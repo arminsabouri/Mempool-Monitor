@@ -79,7 +79,11 @@ impl TaskContext {
     async fn check_for_pruned_txs(&self) -> Result<()> {
         info!("Checking for pruned txs");
         let txids = self.bitcoind.get_raw_mempool().await?;
-        let pruned_txids = self.db.txids_of_txs_not_in_list(txids)?;
+        let db = self.db.clone();
+        let pruned_txids = tokio::task::spawn_blocking(move || {
+            db.txids_of_txs_not_in_list(txids)
+        })
+        .await??;
         info!("Found {} pruned txs", pruned_txids.len());
         self.db.record_pruned_txs(pruned_txids)?;
         self.db.flush()?;
