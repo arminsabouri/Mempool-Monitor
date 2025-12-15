@@ -262,14 +262,14 @@ impl Database {
             let parent_txid = prev_txid.to_string();
             // Check if txid is in the database
             let txid_exists: bool = conn.query_row(
-                "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1 AND mined_at is NULL",
+                "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1 AND mined_at is NULL AND pruned_at is NULL",
                 params![parent_txid],
                 |row| row.get(0),
             )?;
             if txid_exists {
-                // Update with parent txid
+                // Update with parent txid and mark as CPFP parent
                 conn.execute(
-                    "UPDATE transactions SET child_txid = ?1 WHERE tx_id = ?2",
+                    "UPDATE transactions SET child_txid = ?1, is_cpfp_parent = TRUE WHERE tx_id = ?2",
                     params![tx_id, parent_txid],
                 )?;
             }
