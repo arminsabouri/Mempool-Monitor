@@ -190,7 +190,7 @@ impl Database {
     pub(crate) fn txids_in_mempool(&self) -> Result<Vec<Txid>> {
         let conn = self.0.get()?;
         let query = "SELECT tx_id FROM transactions WHERE pruned_at IS NULL AND mined_at IS NULL";
-        let mut stmt = conn.prepare(&query)?;
+        let mut stmt = conn.prepare(query)?;
         let txids = stmt.query_map([], |row| {
             let txid_str: String = row.get(0)?;
             let txid = Txid::from_str(&txid_str).expect("Valid txid");
@@ -211,7 +211,7 @@ impl Database {
         let txids_not_in_current_mempool = mempool_txids
             .iter()
             .filter(|txid| !txids.contains(txid))
-            .map(|txid| txid.clone())
+            .copied()
             .collect::<Vec<_>>();
 
         Ok(txids_not_in_current_mempool)
@@ -310,7 +310,8 @@ impl Database {
         &self,
         tx: &Transaction,
         fee_total: u64,
-        fee_rate: FeeRate,
+        // TODO: Store the fee rate bump
+        _fee_rate: FeeRate,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
@@ -387,6 +388,7 @@ impl Database {
     }
 
     /// Check if a transaction is marked as a CPFP parent
+    #[allow(dead_code)]
     pub fn is_cpfp_parent(&self, txid: &Txid) -> Result<bool> {
         let conn = self.0.get()?;
         let txid_hex = txid.to_string();
@@ -399,6 +401,7 @@ impl Database {
     }
 
     /// Check if a transaction is mined
+    #[allow(dead_code)]
     pub fn is_mined(&self, txid: &Txid) -> Result<bool> {
         let conn = self.0.get()?;
         let txid_hex = txid.to_string();
@@ -411,6 +414,7 @@ impl Database {
     }
 
     /// Check if a transaction is in the RBF table
+    #[allow(dead_code)]
     pub fn is_rbf(&self, txid: &Txid) -> Result<bool> {
         let conn = self.0.get()?;
         let txid_hex = txid.to_string();

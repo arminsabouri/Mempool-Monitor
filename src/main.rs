@@ -45,8 +45,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let zmq_factory =
-        BitcoinZmqFactory::new(args.bitcoind_host.clone(), args.bitcoind_zmq_port.clone());
+    let zmq_factory = BitcoinZmqFactory::new(args.bitcoind_host.clone(), args.bitcoind_zmq_port);
     let db = database::Database::new("mempool-tracker.db")?;
     let bitcoind_url = format!("http://{}:{}", args.bitcoind_host, args.bitcoind_rpc_port);
 
@@ -72,7 +71,7 @@ async fn main() -> Result<()> {
         args.num_workers as usize,
         mempool_state_check_interval,
         prune_check_interval,
-        args.enable_mining_info.then(|| track_mining_interval),
+        args.enable_mining_info.then_some(track_mining_interval),
     );
     app.init().await?;
     app.run().await?;

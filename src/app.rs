@@ -134,8 +134,8 @@ impl App {
         let shutdown_rx_2 = shutdown_tx.subscribe();
         let shutdown_rx_3 = shutdown_tx.subscribe();
 
-        let mempool_state_check_interval = self.mempool_state_check_interval.clone();
-        let prune_check_interval = self.prune_check_interval.clone();
+        let mempool_state_check_interval = self.mempool_state_check_interval;
+        let prune_check_interval = self.prune_check_interval;
 
         let mempool_state_handle = tokio::spawn(async move {
             let mut shutdown = shutdown_rx_1;
