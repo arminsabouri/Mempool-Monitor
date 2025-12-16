@@ -385,4 +385,40 @@ impl Database {
             Transaction::consensus_decode(&mut bytes.as_slice()).expect("Valid transaction")
         }))
     }
+
+    /// Check if a transaction is marked as a CPFP parent
+    pub fn is_cpfp_parent(&self, txid: &Txid) -> Result<bool> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let is_parent: bool = conn.query_row(
+            "SELECT is_cpfp_parent FROM transactions WHERE tx_id = ?1",
+            params![txid_hex],
+            |row| row.get(0),
+        )?;
+        Ok(is_parent)
+    }
+
+    /// Check if a transaction is mined
+    pub fn is_mined(&self, txid: &Txid) -> Result<bool> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let mined_at: Option<u64> = conn.query_row(
+            "SELECT mined_at FROM transactions WHERE tx_id = ?1",
+            params![txid_hex],
+            |row| row.get(0),
+        )?;
+        Ok(mined_at.is_some())
+    }
+
+    /// Check if a transaction is in the RBF table
+    pub fn is_rbf(&self, txid: &Txid) -> Result<bool> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM rbf WHERE replaces = ?1",
+            params![txid_hex],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
 }
