@@ -75,14 +75,11 @@ pub(crate) struct AddIsCpfpParent;
 
 impl Migration for AddIsCpfpParent {
     fn id(&self) -> &'static str {
-        "add_is_cpfp_parent"
+        "parent_txid"
     }
 
     fn migrate(&self, conn: &rusqlite::Connection) -> Result<()> {
-        conn.execute(
-            "ALTER TABLE transactions ADD COLUMN is_cpfp_parent BOOLEAN NOT NULL DEFAULT FALSE",
-            [],
-        )?;
+        conn.execute("ALTER TABLE transactions ADD COLUMN parent_txid TEXT", [])?;
 
         let applied_at = now!().to_string();
         conn.execute(

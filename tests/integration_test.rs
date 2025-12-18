@@ -2,10 +2,12 @@
 mod tests {
 
     use anyhow::Result;
-    use bitcoin::{Amount, Txid};
+    use bitcoin::consensus::Decodable;
+    use bitcoin::{Amount, Transaction, Txid};
     use bitcoind_async_client::{Auth as AsyncAuth, Client as AsyncClient};
-    use corepc_node::{Client, Node};
+    use corepc_node::{Client, Node, WalletCreateFundedPsbtInput};
     use mempool_tracker::{app::App, database::Database, zmq_factory::BitcoinZmqFactory};
+    use std::collections::BTreeMap;
     use std::str::FromStr;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -235,15 +237,9 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Create a parent transaction with low fee (stuck in mempool)
-        let parent_address = ctx.rpc_client.new_address()?;
-        let child_address = ctx.rpc_client.new_address()?;
-
-        // Create parent transaction with very low fee
-        let parent_amount = Amount::from_sat(100_000);
         let parent_txid = ctx
             .rpc_client
-            .send_to_address(&parent_address, parent_amount)?
+            .send_to_address(&ctx.rpc_client.new_address()?, Amount::from_sat(100_000))?
             .txid()?;
 
         // Wait for parent transaction to be processed
@@ -253,47 +249,42 @@ mod tests {
             .rpc_client
             .get_raw_transaction(parent_txid)?
             .transaction()?;
-        let parent_txid_computed = parent_tx.compute_txid();
+
+        let parent_txid = parent_tx.compute_txid();
 
         // Verify parent transaction is in database
-        assert!(ctx.db.get_tx_by_txid(&parent_txid_computed)?.is_some());
+        assert!(ctx.db.get_tx_by_txid(&parent_txid)?.is_some());
 
         // Initially, parent should not be marked as CPFP parent
-        assert!(!ctx.db.is_cpfp_parent(&parent_txid_computed)?);
+        assert!(ctx.db.child_txid(&parent_txid)?.is_none());
 
-        // Create a child transaction that spends from the parent (CPFP)
-        // The child transaction pays a higher fee to incentivize miners to include both
-        let child_amount = Amount::from_sat(50_000);
-        let child_txid = ctx
+        // Create and sign the child tx
+        let mut outputs = BTreeMap::new();
+        outputs.insert(ctx.rpc_client.new_address()?, Amount::from_sat(90_000));
+
+        let psbt = ctx
             .rpc_client
-            .send_to_address(&child_address, child_amount)?
-            .txid()?;
-
+            .wallet_create_funded_psbt(
+                vec![WalletCreateFundedPsbtInput::new(parent_txid, 0)],
+                vec![outputs],
+            )?
+            .psbt;
+        let signed_psbt = ctx
+            .rpc_client
+            .wallet_process_psbt(&bitcoin::Psbt::from_str(&psbt)?)?;
+        let hex = hex::decode(signed_psbt.hex.unwrap())?;
+        let child_tx = Transaction::consensus_decode(&mut hex.as_slice())?;
+        let child_txid = ctx.rpc_client.send_raw_transaction(&child_tx)?.txid()?;
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        let child_tx = ctx
-            .rpc_client
-            .get_raw_transaction(child_txid)?
-            .transaction()?;
-        let child_txid_computed = child_tx.compute_txid();
-
         // Verify child transaction is in database
-        assert!(ctx.db.get_tx_by_txid(&child_txid_computed)?.is_some());
+        assert!(ctx.db.get_tx_by_txid(&child_txid)?.is_some());
 
-        // Verify parent is now marked as CPFP parent
-        // Note: This depends on the child transaction actually spending from the parent
-        // In a real scenario, we'd need to manually construct the child to spend from parent
-        // For now, we check if the detection logic works when a child is created
+        let db_child_txid = ctx.db.child_txid(&parent_txid)?.unwrap();
+        assert_eq!(db_child_txid, child_txid);
 
-        // Check if parent is marked as CPFP parent (if child spends from it)
-        // The CPFP detection happens in insert_mempool_tx when a child transaction
-        // references a parent transaction that's in the mempool
-        let is_cpfp_parent = ctx.db.is_cpfp_parent(&parent_txid_computed)?;
-
-        // If the child transaction actually spends from the parent, it should be marked
-        // Otherwise, we at least verify the database query works
-        println!("Parent is CPFP parent: {}", is_cpfp_parent);
-
+        let db_parent_txid = ctx.db.parent_txid(&child_txid)?.unwrap();
+        assert_eq!(db_parent_txid, parent_txid);
         app_handle.abort();
 
         Ok(())

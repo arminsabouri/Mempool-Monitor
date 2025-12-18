@@ -56,6 +56,9 @@ impl Database {
                 fee_rate INTEGER NOT NULL,
                 version INTEGER NOT NULL
             )",
+            // Cols added in migrations
+            // child_txid TEXT,
+            // seen_in_mempool BOOLEAN NOT NULL DEFAULT TRUE,
             [],
         )?;
         // Create index
@@ -256,22 +259,29 @@ impl Database {
 
         let tx_id = tx.compute_txid().to_string();
         let found_at = found_at.unwrap_or(now!());
+        let mut parent_txid = None;
 
         for input in tx.input.iter() {
             let prev_txid = input.previous_output.txid;
-            let parent_txid = prev_txid.to_string();
-            // Check if txid is in the database
-            let txid_exists: bool = conn.query_row(
+            let maybe_parent_txid = prev_txid.to_string();
+            // Check if parent txid exists in the mempool
+            let txid_exists: i32 = conn.query_row(
                 "SELECT COUNT(*) FROM transactions WHERE tx_id = ?1 AND mined_at is NULL AND pruned_at is NULL",
-                params![parent_txid],
+                params![maybe_parent_txid],
                 |row| row.get(0),
             )?;
-            if txid_exists {
-                // Update with parent txid and mark as CPFP parent
+
+            debug_assert!(
+                txid_exists <= 1,
+                "Parent txid should only exist once in the mempool"
+            );
+            if txid_exists > 0 {
+                // Update the parent txid with the child txid
                 conn.execute(
-                    "UPDATE transactions SET child_txid = ?1, is_cpfp_parent = TRUE WHERE tx_id = ?2",
-                    params![tx_id, parent_txid],
+                    "UPDATE transactions SET child_txid = ?1 WHERE tx_id = ?2",
+                    params![tx_id, maybe_parent_txid],
                 )?;
+                parent_txid = Some(maybe_parent_txid);
             }
         }
 
@@ -289,6 +299,13 @@ impl Database {
                 MEMPOOL_TRANSACTION_VERSION
             ],
         )?;
+
+        if let Some(parent_txid) = parent_txid {
+            conn.execute(
+                "UPDATE transactions SET parent_txid = ?1 WHERE tx_id = ?2",
+                params![parent_txid, tx_id],
+            )?;
+        }
 
         Ok(())
     }
@@ -389,15 +406,28 @@ impl Database {
 
     /// Check if a transaction is marked as a CPFP parent
     #[allow(dead_code)]
-    pub fn is_cpfp_parent(&self, txid: &Txid) -> Result<bool> {
+    pub fn child_txid(&self, txid: &Txid) -> Result<Option<Txid>> {
         let conn = self.0.get()?;
         let txid_hex = txid.to_string();
-        let is_parent: bool = conn.query_row(
-            "SELECT is_cpfp_parent FROM transactions WHERE tx_id = ?1",
+        let child_txid: Option<String> = conn.query_row(
+            "SELECT child_txid FROM transactions WHERE tx_id = ?1",
             params![txid_hex],
             |row| row.get(0),
         )?;
-        Ok(is_parent)
+        Ok(child_txid.map(|txid| Txid::from_str(&txid).expect("Valid txid")))
+    }
+
+    /// get Parent txid of a transaction if one exists
+    #[allow(dead_code)]
+    pub fn parent_txid(&self, txid: &Txid) -> Result<Option<Txid>> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let parent_txid: Option<String> = conn.query_row(
+            "SELECT parent_txid FROM transactions WHERE tx_id = ?1",
+            params![txid_hex],
+            |row| row.get(0),
+        )?;
+        Ok(parent_txid.map(|txid| Txid::from_str(&txid).expect("Valid txid")))
     }
 
     /// Check if a transaction is mined
