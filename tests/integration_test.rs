@@ -69,6 +69,7 @@ mod tests {
                 2,
                 Duration::from_secs(25),
                 Duration::from_secs(120),
+                false, // disable_prune_check
                 None,
             );
 

@@ -10,7 +10,7 @@ use crate::{
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
 use bitcoind_async_client::{traits::Reader, Client};
-use futures_util::StreamExt;
+use futures_util::{future, StreamExt};
 use log::{error, info};
 use tokio::signal::ctrl_c;
 
@@ -24,10 +24,12 @@ pub struct App {
     num_workers: usize,
     mempool_state_check_interval: Duration,
     prune_check_interval: Duration,
+    disable_prune_check: bool,
     mining_info_interval: Option<Duration>,
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rpc_client: Client,
         zmq_factory: BitcoinZmqFactory,
@@ -35,6 +37,7 @@ impl App {
         num_workers: usize,
         mempool_state_check_interval: Duration,
         prune_check_interval: Duration,
+        disable_prune_check: bool,
         mining_info_interval: Option<Duration>,
     ) -> Self {
         let (sender, receiver) = bounded(100_000);
@@ -47,6 +50,7 @@ impl App {
             num_workers,
             mempool_state_check_interval,
             prune_check_interval,
+            disable_prune_check,
             mining_info_interval,
         }
     }
@@ -131,11 +135,11 @@ impl App {
 
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
         let shutdown_rx_1 = shutdown_tx.subscribe();
-        let shutdown_rx_2 = shutdown_tx.subscribe();
         let shutdown_rx_3 = shutdown_tx.subscribe();
 
         let mempool_state_check_interval = self.mempool_state_check_interval;
         let prune_check_interval = self.prune_check_interval;
+        let disable_prune_check = self.disable_prune_check;
 
         let mempool_state_handle = tokio::spawn(async move {
             let mut shutdown = shutdown_rx_1;
@@ -153,21 +157,28 @@ impl App {
             Ok::<(), anyhow::Error>(())
         });
 
-        let prune_check_handle = tokio::spawn(async move {
-            let mut shutdown = shutdown_rx_2;
-            loop {
-                tokio::select! {
-                    _ = shutdown.recv() => {
-                        info!("Shutting down prune check task");
-                        break;
-                    }
-                    _ = tokio::time::sleep(prune_check_interval) => {
-                        tasks_tx_2.send(Task::PruneCheck).await?;
+        // Conditionally start prune check task
+        let prune_check_handle = if !disable_prune_check {
+            let shutdown_rx_2 = shutdown_tx.subscribe();
+            Some(tokio::spawn(async move {
+                let mut shutdown = shutdown_rx_2;
+                loop {
+                    tokio::select! {
+                        _ = shutdown.recv() => {
+                            info!("Shutting down prune check task");
+                            break;
+                        }
+                        _ = tokio::time::sleep(prune_check_interval) => {
+                            tasks_tx_2.send(Task::PruneCheck).await?;
+                        }
                     }
                 }
-            }
-            Ok::<(), anyhow::Error>(())
-        });
+                Ok::<(), anyhow::Error>(())
+            }))
+        } else {
+            info!("Prune check disabled");
+            None
+        };
 
         let mut zmq_message_stream = self.zmq_factory.connect()?;
         let zmq_handle = {
@@ -223,6 +234,20 @@ impl App {
             None
         };
 
+        // Create a pinned boxed future for prune check handle that never completes if disabled
+        #[allow(clippy::type_complexity)]
+        let prune_check_future: std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<Result<(), anyhow::Error>, tokio::task::JoinError>,
+                    > + Send,
+            >,
+        > = if let Some(handle) = prune_check_handle {
+            Box::pin(handle)
+        } else {
+            Box::pin(future::pending())
+        };
+
         tokio::select! {
             // Wait for ctrl-c
             _ = ctrl_c() => {
@@ -230,7 +255,7 @@ impl App {
                 shutdown_tx.send(()).map_err(|e| anyhow::anyhow!("Failed to send shutdown signal: {}", e))?;
             }
             r = mempool_state_handle => r?.map_err(|e| anyhow::anyhow!("Mempool state task failed: {}", e))?,
-            r = prune_check_handle => r?.map_err(|e| anyhow::anyhow!("Prune check task failed: {}", e))?,
+            r = prune_check_future => r?.map_err(|e| anyhow::anyhow!("Prune check task failed: {}", e))?,
             r = zmq_handle => r?.map_err(|e| anyhow::anyhow!("ZMQ task failed: {}", e))?,
         };
 

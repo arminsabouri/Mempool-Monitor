@@ -33,6 +33,8 @@ struct Args {
     mempool_state_check_interval: u64,
     #[clap(long, default_value_t = 120)]
     prune_check_interval: u64,
+    #[clap(long, default_value_t = false)]
+    disable_prune_check: bool,
     #[clap(long, default_value_t = 60 * 60)]
     track_mining_interval: u64,
     #[clap(long, default_value_t = false)]
@@ -71,6 +73,7 @@ async fn main() -> Result<()> {
         args.num_workers as usize,
         mempool_state_check_interval,
         prune_check_interval,
+        args.disable_prune_check,
         args.enable_mining_info.then_some(track_mining_interval),
     );
     app.init().await?;
