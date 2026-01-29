@@ -53,7 +53,7 @@ impl Database {
                 pruned_at DATETIME,
                 parent_txid TEXT,
                 absolute_fee INTEGER NOT NULL,
-                fee_rate INTEGER NOT NULL,
+                fee_rate REAL NOT NULL,
                 version INTEGER NOT NULL
             )",
             // Cols added in migrations
@@ -160,7 +160,7 @@ impl Database {
                 found_at,
                 mined_at,
                 Amount::ZERO.to_sat(),
-                FeeRate::ZERO.to_sat_per_vb_ceil(),
+                0.0,
                 COINBASE_TRANSACTION_VERSION
             ],
         )?;
@@ -249,7 +249,7 @@ impl Database {
         tx: Transaction,
         found_at: Option<u64>,
         absolute_fee: Amount,
-        fee_rate: FeeRate,
+        _fee_rate: FeeRate,
     ) -> Result<()> {
         let conn = self.0.get()?;
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
@@ -285,6 +285,15 @@ impl Database {
             }
         }
 
+        // Calculate fee rate as decimal: satoshis per vbyte
+        let weight = tx.weight();
+        let vbytes = weight.to_vbytes_ceil();
+        let fee_rate_decimal = if vbytes == 0 {
+            0.0
+        } else {
+            absolute_fee.to_sat() as f64 / vbytes as f64
+        };
+
         conn.execute(
             "INSERT OR REPLACE INTO transactions
             (inputs_hash, tx_id, tx_data, found_at, absolute_fee, fee_rate, version)
@@ -295,7 +304,7 @@ impl Database {
                 tx_str,
                 found_at,
                 absolute_fee.to_sat(),
-                fee_rate.to_sat_per_vb_ceil(),
+                fee_rate_decimal,
                 MEMPOOL_TRANSACTION_VERSION
             ],
         )?;
@@ -454,5 +463,56 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    /// Get the fee rate for a transaction
+    #[allow(dead_code)]
+    pub fn get_fee_rate(&self, txid: &Txid) -> Result<Option<f64>> {
+        let conn = self.0.get()?;
+        let txid_hex = txid.to_string();
+        let mut stmt = conn.prepare("SELECT fee_rate FROM transactions WHERE tx_id = ?1")?;
+        let fee_rate: Option<f64> = stmt
+            .query_row(params![txid_hex], |row| row.get(0))
+            .optional()?;
+        Ok(fee_rate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{absolute::LockTime, Amount, Transaction, TxOut};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_fee_rate_stored_as_decimal() -> Result<()> {
+        let tempdir = TempDir::new()?;
+        let db_path = tempdir.path().join("test.db");
+        let db = Database::new(db_path.to_str().unwrap())?;
+
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: bitcoin::ScriptBuf::new(),
+            }],
+        };
+
+        let absolute_fee = Amount::from_sat(150);
+        let fee_rate = FeeRate::from_sat_per_vb(1).expect("valid fee rate");
+        db.insert_mempool_tx(tx.clone(), None, absolute_fee, fee_rate)?;
+
+        let txid = tx.compute_txid();
+        let stored_fee_rate = db.get_fee_rate(&txid)?.expect("fee_rate should exist");
+
+        assert_ne!(
+            stored_fee_rate,
+            stored_fee_rate.floor(),
+            "fee_rate should be a decimal value"
+        );
+
+        Ok(())
     }
 }
