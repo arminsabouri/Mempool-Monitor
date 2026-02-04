@@ -4,13 +4,6 @@ use bitcoin_hashes::Sha256;
 use reqwest::Client as ReqwestClient;
 use serde_json::Value;
 
-// Prune tx witness in place
-pub fn prune_large_witnesses(tx: &mut Transaction) {
-    tx.input.iter_mut().for_each(|input| {
-        input.witness.clear();
-    });
-}
-
 pub fn get_inputs_hash(inputs: impl IntoIterator<Item = TxIn>) -> Result<String> {
     let mut engine = Sha256::engine();
     for i in inputs {

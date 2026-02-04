@@ -8,10 +8,7 @@ use bitcoin::{
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension};
 
-use crate::{
-    migrations::run_migrations,
-    utils::{get_inputs_hash, prune_large_witnesses},
-};
+use crate::{migrations::run_migrations, utils::get_inputs_hash};
 use log::info;
 
 #[macro_export]
@@ -175,8 +172,6 @@ impl Database {
     }
 
     pub(crate) fn record_mined_tx(&self, tx: &Transaction) -> Result<()> {
-        let mut tx = tx.clone();
-        prune_large_witnesses(&mut tx);
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
