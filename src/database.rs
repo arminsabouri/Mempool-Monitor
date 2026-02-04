@@ -54,6 +54,8 @@ impl Database {
                 parent_txid TEXT,
                 absolute_fee INTEGER NOT NULL,
                 fee_rate REAL NOT NULL,
+                size INTEGER NOT NULL,
+                weight INTEGER NOT NULL,
                 version INTEGER NOT NULL
             )",
             // Cols added in migrations
@@ -148,11 +150,13 @@ impl Database {
         let mined_at = now!();
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
-        let tx_str = hex::encode(tx_bytes);
+        let tx_str = hex::encode(&tx_bytes);
+        let size = tx_bytes.len() as i64;
+        let weight = tx.weight().to_wu() as i64;
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_data, tx_id, found_at, mined_at, absolute_fee, fee_rate, version)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (inputs_hash, tx_data, tx_id, found_at, mined_at, absolute_fee, fee_rate, size, weight, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 tx_id,
                 tx_str,
@@ -161,6 +165,8 @@ impl Database {
                 mined_at,
                 Amount::ZERO.to_sat(),
                 0.0,
+                size,
+                weight,
                 COINBASE_TRANSACTION_VERSION
             ],
         )?;
@@ -255,7 +261,7 @@ impl Database {
         let inputs_hash = get_inputs_hash(tx.clone().input)?;
         let mut tx_bytes = vec![];
         tx.consensus_encode(&mut tx_bytes)?;
-        let tx_str = hex::encode(tx_bytes);
+        let tx_str = hex::encode(&tx_bytes);
 
         let tx_id = tx.compute_txid().to_string();
         let found_at = found_at.unwrap_or(now!());
@@ -293,11 +299,13 @@ impl Database {
         } else {
             absolute_fee.to_sat() as f64 / vbytes as f64
         };
+        let size = tx_bytes.len() as i64;
+        let weight = weight.to_wu() as i64;
 
         conn.execute(
             "INSERT OR REPLACE INTO transactions
-            (inputs_hash, tx_id, tx_data, found_at, absolute_fee, fee_rate, version)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (inputs_hash, tx_id, tx_data, found_at, absolute_fee, fee_rate, size, weight, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 inputs_hash,
                 tx_id,
@@ -305,6 +313,8 @@ impl Database {
                 found_at,
                 absolute_fee.to_sat(),
                 fee_rate_decimal,
+                size,
+                weight,
                 MEMPOOL_TRANSACTION_VERSION
             ],
         )?;
